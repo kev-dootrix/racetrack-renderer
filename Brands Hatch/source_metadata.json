@@ -1,0 +1,39 @@
+{
+  "title": "Brands Hatch",
+  "event": null,
+  "fastest_lap": null,
+  "sources": [
+    "F1TENTH racetrack repository centerline/raceline data",
+    "Original F1TENTH racetrack database derived from OpenStreetMap GPS center lines"
+  ],
+  "data_urls": {
+    "raceline": "https://raw.githubusercontent.com/f1tenth/f1tenth_racetracks/main/BrandsHatch/BrandsHatch_raceline.csv",
+    "centerline": "https://raw.githubusercontent.com/f1tenth/f1tenth_racetracks/main/BrandsHatch/BrandsHatch_centerline.csv"
+  },
+  "sector_splits": [
+    {
+      "sector": 1,
+      "method": "equal thirds of raceline distance",
+      "distance_along_trace": 116.95,
+      "point": {
+        "x": 26.544,
+        "y": -16.247
+      }
+    },
+    {
+      "sector": 2,
+      "method": "equal thirds of raceline distance",
+      "distance_along_trace": 233.899,
+      "point": {
+        "x": -27.487,
+        "y": -43.724
+      }
+    }
+  ],
+  "config_overrides_used": {
+    "track_config_id": "brandshatch",
+    "rotation_degrees": -90.0,
+    "corner_labels": true,
+    "marker_spread_hints": false
+  }
+}

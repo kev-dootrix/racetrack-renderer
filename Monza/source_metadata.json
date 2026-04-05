@@ -1,0 +1,51 @@
+{
+  "title": "Monza",
+  "event": {
+    "year": 2024,
+    "event_name": "Italian Grand Prix",
+    "official_event_name": "FORMULA 1 PIRELLI GRAN PREMIO D\u2019ITALIA 2024",
+    "location": "Monza",
+    "country": "Italy",
+    "session_type": "Q"
+  },
+  "fastest_lap": {
+    "driver": "NOR",
+    "lap_time": "0 days 00:01:19.327000",
+    "sector_1_time": "0 days 00:00:26.492000",
+    "sector_2_time": "0 days 00:00:26.579000",
+    "sector_3_time": "0 days 00:00:26.256000"
+  },
+  "sources": [
+    "FastF1 event schedule resolution",
+    "FastF1 fastest-lap position data for circuit geometry",
+    "FastF1 circuit_info corner coordinates and angles for marker placement",
+    "FastF1 fastest-lap sector times mapped onto the lap trace for timing-sector boundaries"
+  ],
+  "sector_splits": [
+    {
+      "sector": 1,
+      "method": "mapped from Sector1SessionTime onto position trace",
+      "distance_along_trace": 18778.467,
+      "point": {
+        "x": 14180.944,
+        "y": 5072.9
+      }
+    },
+    {
+      "sector": 2,
+      "method": "mapped from Sector2SessionTime onto position trace",
+      "distance_along_trace": 36877.196,
+      "point": {
+        "x": 7287.567,
+        "y": 5862.917
+      }
+    }
+  ],
+  "config_overrides_used": {
+    "track_config_id": "monza",
+    "rotation_degrees": -90.0,
+    "corner_labels": true,
+    "marker_spread_hints": false,
+    "generated_corner_name_candidates": true
+  }
+}

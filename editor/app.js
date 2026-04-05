@@ -21,6 +21,7 @@ const elements = {
   connectButton: document.getElementById("connectButton"),
   saveButton: document.getElementById("saveButton"),
   fitButton: document.getElementById("fitButton"),
+  selectTitleButton: document.getElementById("selectTitleButton"),
   trackList: document.getElementById("trackList"),
   repoLabel: document.getElementById("repoLabel"),
   trackMeta: document.getElementById("trackMeta"),
@@ -31,14 +32,23 @@ const elements = {
   zoomLabel: document.getElementById("zoomLabel"),
   emptyInspector: document.getElementById("emptyInspector"),
   markerInspector: document.getElementById("markerInspector"),
+  titleInspector: document.getElementById("titleInspector"),
   labelInspector: document.getElementById("labelInspector"),
   markerTurn: document.getElementById("markerTurn"),
   markerX: document.getElementById("markerX"),
   markerY: document.getElementById("markerY"),
+  titleVisible: document.getElementById("titleVisible"),
+  titleX: document.getElementById("titleX"),
+  titleY: document.getElementById("titleY"),
+  titleFontFamily: document.getElementById("titleFontFamily"),
+  titleFontSize: document.getElementById("titleFontSize"),
   labelName: document.getElementById("labelName"),
   labelAnchor: document.getElementById("labelAnchor"),
   labelX: document.getElementById("labelX"),
   labelY: document.getElementById("labelY"),
+  labelFontFamily: document.getElementById("labelFontFamily"),
+  labelFontSize: document.getElementById("labelFontSize"),
+  resetTitleButton: document.getElementById("resetTitleButton"),
   resetMarkerButton: document.getElementById("resetMarkerButton"),
   resetLabelButton: document.getElementById("resetLabelButton"),
 };
@@ -104,12 +114,53 @@ function ensureMarkerOverrideMap() {
   return state.current.config.marker_position_overrides;
 }
 
+function ensureTitleSettings() {
+  if (!state.current.config.title_settings || typeof state.current.config.title_settings !== "object") {
+    state.current.config.title_settings = {};
+  }
+  return state.current.config.title_settings;
+}
+
+function ensureLabelSettings() {
+  if (!state.current.config.label_settings || typeof state.current.config.label_settings !== "object") {
+    state.current.config.label_settings = {};
+  }
+  return state.current.config.label_settings;
+}
+
 function getCurrentMarkers() {
   return state.current.derived.markers;
 }
 
 function getCurrentLabels() {
   return state.current.derived.labels;
+}
+
+function getCurrentTitle() {
+  return state.current.derived.title;
+}
+
+function getLegacyLabelSetting(key) {
+  const labels = state.current?.config?.corner_labels || [];
+  for (const label of labels) {
+    if (label && label[key] != null && String(label[key]).trim() !== "") {
+      return label[key];
+    }
+  }
+  return null;
+}
+
+function getGlobalLabelStyle() {
+  const labelSettings = state.current?.config?.label_settings || {};
+  const legacyFontFamily = getLegacyLabelSetting("font_family");
+  const legacyFontSize = getLegacyLabelSetting("font_size");
+  return {
+    fontFamily: String(labelSettings.font_family || legacyFontFamily || state.current?.defaultLabelStyle?.fontFamily || ""),
+    fontSize: parseFontSizeValue(
+      labelSettings.font_size ?? legacyFontSize,
+      parseFontSizeValue(state.current?.defaultLabelStyle?.fontSize, state.current?.labelFontSize || DEFAULT_LABEL_SIZE),
+    ),
+  };
 }
 
 function getSelectedMarker() {
@@ -132,6 +183,11 @@ function estimateLabelBounds(name, anchor, fontSize) {
     centerOffsetX = -width / 2;
   }
   return { width, height, centerOffsetX };
+}
+
+function parseFontSizeValue(value, fallback) {
+  const parsed = Number.parseFloat(String(value || ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function rectCircleIntersects(rectX, rectY, halfW, halfH, circleX, circleY, radius) {
@@ -277,12 +333,14 @@ function buildDerivedState() {
   const turnLookup = new Map(state.current.trackTurns.map((turn) => [turn.turn, turn]));
   const labels = [];
   const fontSize = state.current.labelFontSize || DEFAULT_LABEL_SIZE;
+  const globalLabelStyle = getGlobalLabelStyle();
 
   (state.current.config.corner_labels || []).forEach((spec, index) => {
     const selectedTurns = (spec.turns || []).map((key) => turnLookup.get(key)).filter(Boolean);
     if (!selectedTurns.length) {
       return;
     }
+    const labelStyle = state.current.labelStyleByIndex.get(index) || state.current.defaultLabelStyle;
     const projected = selectedTurns.map((turn) => projectTurnToSvg(state.current.transform, turn));
     const averageX = projected.reduce((sum, point) => sum + point.x, 0) / projected.length;
     const averageY = projected.reduce((sum, point) => sum + point.y, 0) / projected.length;
@@ -292,6 +350,9 @@ function buildDerivedState() {
       turns: [...(spec.turns || [])],
       name: String(spec.name ?? ""),
       anchor: String(spec.anchor || "middle"),
+      fontFamily: globalLabelStyle.fontFamily || String(labelStyle.fontFamily || ""),
+      fontWeight: String(spec.font_weight || labelStyle.fontWeight || ""),
+      fontSize: globalLabelStyle.fontSize || fontSize,
       x: manualPosition ? Number(spec.x) : averageX + Number(spec.dx || 0),
       y: manualPosition ? Number(spec.y) : averageY + Number(spec.dy || 0),
       manualPosition,
@@ -303,7 +364,8 @@ function buildDerivedState() {
     if (label.manualPosition) {
       return;
     }
-    const { width, height, centerOffsetX } = estimateLabelBounds(label.name, label.anchor, fontSize);
+    const effectiveFontSize = parseFontSizeValue(label.fontSize, fontSize);
+    const { width, height, centerOffsetX } = estimateLabelBounds(label.name, label.anchor, effectiveFontSize);
     const halfW = width / 2;
     const halfH = height / 2;
     for (let pass = 0; pass < 36; pass += 1) {
@@ -338,7 +400,19 @@ function buildDerivedState() {
     }
   });
 
-  state.current.derived = { markers, labels: resolvedLabels };
+  const titleSettings = state.current.config.title_settings || {};
+  const titleDefaults = state.current.titleDefaults;
+  const title = {
+    text: titleDefaults.text,
+    x: titleSettings.x != null ? Number(titleSettings.x) : titleDefaults.x,
+    y: titleSettings.y != null ? Number(titleSettings.y) : titleDefaults.y,
+    hidden: Boolean(titleSettings.hidden),
+    fontFamily: String(titleSettings.font_family || titleDefaults.fontFamily || ""),
+    fontWeight: String(titleSettings.font_weight || titleDefaults.fontWeight || ""),
+    fontSize: parseFontSizeValue(titleSettings.font_size, parseFontSizeValue(titleDefaults.fontSize, 34)),
+  };
+
+  state.current.derived = { markers, labels: resolvedLabels, title };
 }
 
 function buildMultilineText(parent, x, y, text) {
@@ -347,7 +421,8 @@ function buildMultilineText(parent, x, y, text) {
     parent.textContent = lines[0] || "";
     return;
   }
-  const lineHeight = (state.current.labelFontSize || DEFAULT_LABEL_SIZE) * 1.05;
+  const fontSize = parseFontSizeValue(parent.style.fontSize, state.current.labelFontSize || DEFAULT_LABEL_SIZE);
+  const lineHeight = fontSize * 1.05;
   lines.forEach((line, index) => {
     const tspan = document.createElementNS(SVG_NS, "tspan");
     tspan.setAttribute("x", x.toFixed(2));
@@ -364,8 +439,37 @@ function renderSvg() {
   }
   buildDerivedState();
 
+  state.current.titleLayer.replaceChildren();
   state.current.markerLayer.replaceChildren();
   state.current.labelLayer.replaceChildren();
+
+  const title = getCurrentTitle();
+  if (!title.hidden) {
+    const group = document.createElementNS(SVG_NS, "g");
+    group.classList.add("editor-title");
+    group.dataset.title = "true";
+    if (state.selection?.type === "title") {
+      group.classList.add("is-selected");
+    }
+
+    const text = document.createElementNS(SVG_NS, "text");
+    text.setAttribute("class", "title");
+    text.setAttribute("data-title", "true");
+    text.setAttribute("x", title.x.toFixed(2));
+    text.setAttribute("y", title.y.toFixed(2));
+    if (title.fontFamily) {
+      text.style.fontFamily = title.fontFamily;
+    }
+    if (title.fontWeight) {
+      text.style.fontWeight = title.fontWeight;
+    }
+    if (title.fontSize) {
+      text.style.fontSize = `${title.fontSize}px`;
+    }
+    text.textContent = title.text;
+    group.appendChild(text);
+    state.current.titleLayer.appendChild(group);
+  }
 
   getCurrentMarkers().forEach((marker) => {
     const group = document.createElementNS(SVG_NS, "g");
@@ -407,6 +511,15 @@ function renderSvg() {
     text.setAttribute("x", label.x.toFixed(2));
     text.setAttribute("y", label.y.toFixed(2));
     text.setAttribute("text-anchor", label.anchor);
+    if (label.fontFamily) {
+      text.style.fontFamily = label.fontFamily;
+    }
+    if (label.fontWeight) {
+      text.style.fontWeight = label.fontWeight;
+    }
+    if (label.fontSize) {
+      text.style.fontSize = `${label.fontSize}px`;
+    }
     buildMultilineText(text, label.x, label.y, label.name);
 
     group.appendChild(text);
@@ -445,10 +558,13 @@ function updateTrackButtons() {
 
 function refreshInspector() {
   const marker = state.selection?.type === "marker" ? getSelectedMarker() : null;
+  const title = state.selection?.type === "title" ? getCurrentTitle() : null;
   const label = state.selection?.type === "label" ? getSelectedLabel() : null;
+  const globalLabelStyle = state.current ? getGlobalLabelStyle() : { fontFamily: "", fontSize: "" };
 
-  elements.emptyInspector.classList.toggle("hidden", Boolean(marker || label));
+  elements.emptyInspector.classList.toggle("hidden", Boolean(marker || label || title));
   elements.markerInspector.classList.toggle("hidden", !marker);
+  elements.titleInspector.classList.toggle("hidden", !title);
   elements.labelInspector.classList.toggle("hidden", !label);
 
   if (marker) {
@@ -456,12 +572,21 @@ function refreshInspector() {
     elements.markerTurn.value = marker.turn;
     elements.markerX.value = marker.x.toFixed(2);
     elements.markerY.value = marker.y.toFixed(2);
+  } else if (title) {
+    elements.selectionLabel.textContent = title.hidden ? "Title (hidden)" : "Track title";
+    elements.titleVisible.checked = !title.hidden;
+    elements.titleX.value = title.x.toFixed(2);
+    elements.titleY.value = title.y.toFixed(2);
+    elements.titleFontFamily.value = title.fontFamily;
+    elements.titleFontSize.value = title.fontSize ? String(title.fontSize) : "";
   } else if (label) {
     elements.selectionLabel.textContent = `Label ${label.index + 1}`;
     elements.labelName.value = label.name;
     elements.labelAnchor.value = label.anchor;
     elements.labelX.value = label.x.toFixed(2);
     elements.labelY.value = label.y.toFixed(2);
+    elements.labelFontFamily.value = globalLabelStyle.fontFamily || "";
+    elements.labelFontSize.value = globalLabelStyle.fontSize ? String(globalLabelStyle.fontSize) : "";
   } else {
     elements.selectionLabel.textContent = "Nothing selected";
   }
@@ -476,10 +601,51 @@ function applyMarkerCoordinates(turnKey, x, y) {
   renderSvg();
 }
 
+function applyTitleCoordinates(x, y) {
+  const titleSettings = ensureTitleSettings();
+  titleSettings.x = Number(x.toFixed(2));
+  titleSettings.y = Number(y.toFixed(2));
+  renderSvg();
+}
+
 function applyLabelCoordinates(index, x, y) {
   const spec = state.current.config.corner_labels[index];
   spec.x = Number(x.toFixed(2));
   spec.y = Number(y.toFixed(2));
+  renderSvg();
+}
+
+function setOptionalTextOverride(target, key, value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    delete target[key];
+  } else if (key === "font_weight") {
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      target[key] = parsed;
+    } else {
+      delete target[key];
+    }
+  } else if (key === "font_size") {
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      target[key] = parsed;
+    } else {
+      delete target[key];
+    }
+  } else {
+    target[key] = trimmed;
+  }
+}
+
+function resetTitleSelection() {
+  const titleSettings = ensureTitleSettings();
+  delete titleSettings.x;
+  delete titleSettings.y;
+  delete titleSettings.hidden;
+  delete titleSettings.font_family;
+  delete titleSettings.font_weight;
+  delete titleSettings.font_size;
   renderSvg();
 }
 
@@ -528,7 +694,7 @@ function extractMarkerPositions(svgRoot, trackTurns) {
 
 function removeEditableNodes(svgRoot) {
   svgRoot
-    .querySelectorAll('[data-editor-layer], g.editor-marker, g.editor-label, circle.marker, text.marker-text, text.label')
+    .querySelectorAll('[data-editor-layer], g.editor-marker, g.editor-label, g.editor-title, circle.marker, text.marker-text, text.label, text.title')
     .forEach((node) => node.remove());
 }
 
@@ -548,6 +714,22 @@ function parseViewBox(svgRoot) {
   };
 }
 
+function detectTextStyle(node, fallbackFontFamily = "", fallbackFontWeight = "", fallbackFontSize = "") {
+  if (!node) {
+    return {
+      fontFamily: fallbackFontFamily,
+      fontWeight: fallbackFontWeight,
+      fontSize: fallbackFontSize,
+    };
+  }
+  const computed = window.getComputedStyle(node);
+  return {
+    fontFamily: computed.fontFamily || fallbackFontFamily,
+    fontWeight: computed.fontWeight || fallbackFontWeight,
+    fontSize: computed.fontSize || fallbackFontSize,
+  };
+}
+
 function detectLabelFontSize(svgRoot) {
   const label = svgRoot.querySelector("text.label");
   if (!label) {
@@ -556,6 +738,31 @@ function detectLabelFontSize(svgRoot) {
   const computed = window.getComputedStyle(label);
   const parsed = Number.parseFloat(computed.fontSize);
   return Number.isFinite(parsed) ? parsed : DEFAULT_LABEL_SIZE;
+}
+
+function extractTitleState(svgRoot, fallbackTitle) {
+  const titleNode = svgRoot.querySelector("text.title");
+  const textStyle = detectTextStyle(titleNode, "Inter, Arial, sans-serif", "700", "34px");
+  return {
+    text: titleNode?.textContent?.trim() || fallbackTitle,
+    x: titleNode ? Number(titleNode.getAttribute("x")) : 96,
+    y: titleNode ? Number(titleNode.getAttribute("y")) : 62,
+    fontFamily: textStyle.fontFamily,
+    fontWeight: textStyle.fontWeight,
+    fontSize: textStyle.fontSize,
+    hidden: false,
+  };
+}
+
+function extractLabelStyleMap(svgRoot) {
+  const styles = new Map();
+  const labelNodes = Array.from(svgRoot.querySelectorAll("text.label"));
+  labelNodes.forEach((node, index) => {
+    const style = detectTextStyle(node, "Inter, Arial, sans-serif", "600", "18px");
+    const labelIndex = Number(node.dataset.labelIndex ?? index);
+    styles.set(labelIndex, style);
+  });
+  return styles;
 }
 
 async function readJsonFile(handle) {
@@ -671,7 +878,10 @@ async function loadTrack(track) {
   const svgDocument = parser.parseFromString(svgText, "image/svg+xml");
   const svgRoot = svgDocument.documentElement;
   elements.canvasStage.replaceChildren(svgRoot);
+  const titleDefaults = extractTitleState(svgRoot, configMatch.payload.title || track.displayName);
   const labelFontSize = detectLabelFontSize(svgRoot);
+  const defaultLabelStyle = detectTextStyle(svgRoot.querySelector("text.label"), "Inter, Arial, sans-serif", "600");
+  const labelStyleByIndex = extractLabelStyleMap(svgRoot);
   const rawMarkerPositions = extractMarkerPositions(svgRoot, trackTurns);
   const transform = buildTrackTransform(trackTurns, rawMarkerPositions);
   const viewBox = parseViewBox(svgRoot);
@@ -679,6 +889,7 @@ async function loadTrack(track) {
   svgRoot.setAttribute("height", String(viewBox.height));
 
   removeEditableNodes(svgRoot);
+  const titleLayer = createLayer(svgRoot, "title");
   const markerLayer = createLayer(svgRoot, "markers");
   const labelLayer = createLayer(svgRoot, "labels");
   elements.canvasStage.style.width = `${viewBox.width}px`;
@@ -687,15 +898,20 @@ async function loadTrack(track) {
   state.current = {
     track,
     svgRoot,
+    titleLayer,
     markerLayer,
     labelLayer,
     viewBox,
     trackTurns,
     transform,
+    titleDefaults,
     labelFontSize,
+    defaultLabelStyle,
+    labelStyleByIndex,
     configHandle: configMatch.handle,
     config: structuredClone(configMatch.payload),
     derived: {
+      title: null,
       markers: [],
       labels: [],
     },
@@ -708,6 +924,7 @@ async function loadTrack(track) {
   fitCurrentTrack();
   elements.saveButton.disabled = false;
   elements.fitButton.disabled = false;
+  elements.selectTitleButton.disabled = false;
   setStatus(`Loaded ${track.displayName}. Drag a marker or label to start tweaking.`);
 }
 
@@ -757,8 +974,18 @@ function handlePointerDown(event) {
     return;
   }
 
+  const titleNode = event.target.closest("[data-title]");
   const markerNode = event.target.closest("[data-turn]");
   const labelNode = event.target.closest("[data-label-index]");
+  if (titleNode) {
+    setSelection({ type: "title" });
+    state.interaction = {
+      type: "title",
+      pointerId: event.pointerId,
+    };
+    elements.canvasViewport.setPointerCapture(event.pointerId);
+    return;
+  }
   if (markerNode) {
     const turnKey = markerNode.dataset.turn;
     setSelection({ type: "marker", key: turnKey });
@@ -809,7 +1036,9 @@ function handlePointerMove(event) {
   }
 
   const position = getSvgCoordinates(event.clientX, event.clientY);
-  if (state.interaction.type === "marker") {
+  if (state.interaction.type === "title") {
+    applyTitleCoordinates(position.x, position.y);
+  } else if (state.interaction.type === "marker") {
     applyMarkerCoordinates(state.interaction.key, position.x, position.y);
   } else if (state.interaction.type === "label") {
     applyLabelCoordinates(state.interaction.index, position.x, position.y);
@@ -845,6 +1074,12 @@ function handleWheel(event) {
 function nudgeSelection(dx, dy) {
   if (!state.current || !state.selection) {
     return;
+  }
+  if (state.selection.type === "title") {
+    const title = getCurrentTitle();
+    if (title) {
+      applyTitleCoordinates(title.x + dx, title.y + dy);
+    }
   }
   if (state.selection.type === "marker") {
     const marker = getSelectedMarker();
@@ -890,6 +1125,12 @@ function handleKeyDown(event) {
 elements.connectButton.addEventListener("click", loadRepository);
 elements.saveButton.addEventListener("click", saveCurrentTrack);
 elements.fitButton.addEventListener("click", fitCurrentTrack);
+elements.selectTitleButton.addEventListener("click", () => {
+  if (state.current) {
+    setSelection({ type: "title" });
+  }
+});
+elements.resetTitleButton.addEventListener("click", resetTitleSelection);
 elements.resetMarkerButton.addEventListener("click", resetMarkerSelection);
 elements.resetLabelButton.addEventListener("click", resetLabelSelection);
 
@@ -907,6 +1148,49 @@ elements.markerY.addEventListener("change", () => {
   }
   const marker = getSelectedMarker();
   applyMarkerCoordinates(marker.turn, marker.x, Number(elements.markerY.value));
+});
+
+elements.titleVisible.addEventListener("change", () => {
+  if (!state.current) {
+    return;
+  }
+  const titleSettings = ensureTitleSettings();
+  titleSettings.hidden = !elements.titleVisible.checked;
+  renderSvg();
+});
+
+elements.titleX.addEventListener("change", () => {
+  const title = getCurrentTitle();
+  if (!title) {
+    return;
+  }
+  applyTitleCoordinates(Number(elements.titleX.value), title.y);
+});
+
+elements.titleY.addEventListener("change", () => {
+  const title = getCurrentTitle();
+  if (!title) {
+    return;
+  }
+  applyTitleCoordinates(title.x, Number(elements.titleY.value));
+});
+
+elements.titleFontFamily.addEventListener("change", () => {
+  if (!state.current) {
+    return;
+  }
+  const titleSettings = ensureTitleSettings();
+  setOptionalTextOverride(titleSettings, "font_family", elements.titleFontFamily.value);
+  renderSvg();
+});
+
+elements.titleFontSize.addEventListener("input", () => {
+  if (!state.current) {
+    return;
+  }
+  const titleSettings = ensureTitleSettings();
+  setOptionalTextOverride(titleSettings, "font_size", elements.titleFontSize.value);
+  renderSvg();
 });
 
 elements.labelName.addEventListener("input", () => {
@@ -939,6 +1223,24 @@ elements.labelY.addEventListener("change", () => {
   }
   const label = getSelectedLabel();
   applyLabelCoordinates(label.index, label.x, Number(elements.labelY.value));
+});
+
+elements.labelFontFamily.addEventListener("input", () => {
+  if (!state.current || state.selection?.type !== "label") {
+    return;
+  }
+  const labelSettings = ensureLabelSettings();
+  setOptionalTextOverride(labelSettings, "font_family", elements.labelFontFamily.value);
+  renderSvg();
+});
+
+elements.labelFontSize.addEventListener("input", () => {
+  if (!state.current || state.selection?.type !== "label") {
+    return;
+  }
+  const labelSettings = ensureLabelSettings();
+  setOptionalTextOverride(labelSettings, "font_size", elements.labelFontSize.value);
+  renderSvg();
 });
 
 elements.canvasViewport.addEventListener("pointerdown", handlePointerDown);

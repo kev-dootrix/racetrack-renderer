@@ -1200,6 +1200,7 @@ def autogenerate_track_config(
         "centerline_url": geometry_spec.centerline_url if geometry_spec else "",
         "style": style_name,
         "rotation_degrees": 0.0,
+        "title_settings": {},
         "marker_offset": DEFAULT_MARKER_OFFSET,
         "marker_position_overrides": {},
         "marker_spread_hints": {},
@@ -1466,6 +1467,8 @@ def render_geometry_only_track(
             "track_config_id": track_config.get("id"),
             "style": style.get("name", DEFAULT_STYLE_NAME),
             "rotation_degrees": rotation_degrees,
+            "title_settings": bool(track_config.get("title_settings")),
+            "label_settings": bool(track_config.get("label_settings")),
             "corner_labels": bool(track_config.get("corner_labels")),
             "marker_position_overrides": bool(track_config.get("marker_position_overrides")),
             "marker_spread_hints": bool(track_config.get("marker_spread_hints")),
@@ -1521,7 +1524,7 @@ def render_geometry_only_track(
     arrow_right_y = arrow_tip_y - tangent_uy * ARROW_HEAD - normal_uy * (ARROW_HEAD * 0.8)
 
     marker_positions = build_marker_positions(turns, track_config, sx, sy)
-    label_positions = build_label_positions(track_config.get("corner_labels", []), turn_lookup, sx, sy)
+    label_positions = build_label_positions(track_config.get("corner_labels", []), turn_lookup, track_config, sx, sy)
     label_positions = resolve_label_collisions(label_positions, marker_positions, float(style["label_size"]))
 
     comparison_centerline_points: list[tuple[float, float]] = []
@@ -1572,10 +1575,10 @@ def render_geometry_only_track(
         f'    .arrow-head {{ fill: {style["arrow_color"]}; }}',
         "  </style>",
         f'  <rect width="{CANVAS_W}" height="{CANVAS_H}" fill="{style["bg"]}"/>',
-        f'  <text class="title" x="{PADDING_X}" y="62">{title}</text>',
         f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["outer"]}" stroke-width="{style["outer_w"]}"/>',
         f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["inner"]}" stroke-width="{style["inner_w"]}"/>',
     ]
+    append_title_element(svg_parts, title, track_config)
 
     sector_label_items: list[dict[str, Any]] = []
     if bool(style.get("sector_labels")):
@@ -1734,10 +1737,14 @@ def build_marker_positions(turns: list[Turn], track_config: dict[str, Any], sx, 
 def build_label_positions(
     label_specs: list[dict[str, Any]],
     turn_lookup: dict[str, Turn],
+    track_config: dict[str, Any],
     sx,
     sy,
 ) -> list[dict[str, float | str | int | bool]]:
     labels = []
+    label_settings = track_config.get("label_settings", {}) if isinstance(track_config.get("label_settings"), dict) else {}
+    global_font_family = str(label_settings.get("font_family", "")).strip()
+    global_font_size = label_settings.get("font_size")
     for idx, spec in enumerate(label_specs):
         selected_turns = [turn_lookup[key] for key in spec.get("turns", []) if key in turn_lookup]
         if not selected_turns:
@@ -1754,6 +1761,9 @@ def build_label_positions(
                 "x": x,
                 "y": y,
                 "anchor": str(spec.get("anchor", "middle")),
+                "font_family": global_font_family or str(spec.get("font_family", "")).strip(),
+                "font_weight": spec.get("font_weight"),
+                "font_size": global_font_size if global_font_size not in (None, "") else spec.get("font_size"),
                 "manual_position": has_absolute_position,
             }
         )
@@ -1857,15 +1867,58 @@ def append_marker_elements(svg_parts: list[str], turns: list[Turn], marker_posit
         svg_parts.extend(build_marker_svg_elements(turn, x, y))
 
 
+def build_text_style_attr(
+    font_family: str | None = None,
+    font_weight: str | int | None = None,
+    font_size: str | int | float | None = None,
+) -> str:
+    declarations: list[str] = []
+    if font_family:
+        declarations.append(f"font-family: {font_family}")
+    if font_weight not in (None, ""):
+        declarations.append(f"font-weight: {font_weight}")
+    if font_size not in (None, ""):
+        declarations.append(f"font-size: {font_size}px")
+    if not declarations:
+        return ""
+    style_value = "; ".join(declarations)
+    return f' style="{escape(style_value, quote=True)}"'
+
+
+def build_title_svg_element(title: str, track_config: dict[str, Any]) -> str | None:
+    title_settings = track_config.get("title_settings", {}) if isinstance(track_config.get("title_settings"), dict) else {}
+    if bool(title_settings.get("hidden")):
+        return None
+    x = float(title_settings.get("x", PADDING_X))
+    y = float(title_settings.get("y", 62))
+    style_attr = build_text_style_attr(
+        str(title_settings.get("font_family", "")).strip() or None,
+        title_settings.get("font_weight"),
+        title_settings.get("font_size"),
+    )
+    return f'  <text class="title" data-title="true" x="{x:.2f}" y="{y:.2f}"{style_attr}>{escape(title)}</text>'
+
+
+def append_title_element(svg_parts: list[str], title: str, track_config: dict[str, Any]) -> None:
+    title_element = build_title_svg_element(title, track_config)
+    if title_element:
+        svg_parts.append(title_element)
+
+
 def build_label_svg_element(item: dict[str, float | str | int | bool], label_size: float) -> str:
     x = float(item["x"])
     y = float(item["y"])
     anchor = escape(str(item.get("anchor", "middle")))
     label_index = int(item.get("index", 0))
     lines = str(item["name"]).split("\n")
+    style_attr = build_text_style_attr(
+        str(item.get("font_family", "")).strip() or None,
+        item.get("font_weight"),
+        item.get("font_size"),
+    )
     attrs = (
         f'class="label" data-label-index="{label_index}" '
-        f'x="{x:.2f}" y="{y:.2f}" text-anchor="{anchor}"'
+        f'x="{x:.2f}" y="{y:.2f}" text-anchor="{anchor}"{style_attr}'
     )
     if len(lines) <= 1:
         return f'  <text {attrs}>{escape(lines[0])}</text>'
@@ -2430,6 +2483,8 @@ def main() -> None:
                 "track_config_id": track_config.get("id"),
                 "style": style.get("name", style_name),
                 "rotation_degrees": rotation_degrees,
+                "title_settings": bool(track_config.get("title_settings")),
+                "label_settings": bool(track_config.get("label_settings")),
                 "corner_labels": bool(track_config.get("corner_labels")),
                 "marker_position_overrides": bool(track_config.get("marker_position_overrides")),
                 "marker_spread_hints": bool(track_config.get("marker_spread_hints")),
@@ -2487,7 +2542,7 @@ def main() -> None:
     arrow_right_y = arrow_tip_y - tangent_uy * ARROW_HEAD - normal_uy * (ARROW_HEAD * 0.8)
 
     marker_positions = build_marker_positions(turns, track_config, sx, sy)
-    label_positions = build_label_positions(track_config.get("corner_labels", []), turn_lookup, sx, sy)
+    label_positions = build_label_positions(track_config.get("corner_labels", []), turn_lookup, track_config, sx, sy)
     label_positions = resolve_label_collisions(label_positions, marker_positions, float(style["label_size"]))
     debug_centerline = bool(track_config.get("debug_centerline"))
     debug_centerline_width = float(track_config.get("debug_centerline_width", 2.0))
@@ -2539,10 +2594,10 @@ def main() -> None:
         f'    .arrow-head {{ fill: {style["arrow_color"]}; }}',
         "  </style>",
         f'  <rect width="{CANVAS_W}" height="{CANVAS_H}" fill="{style["bg"]}"/>',
-        f'  <text class="title" x="{PADDING_X}" y="62">{title}</text>',
         f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["outer"]}" stroke-width="{style["outer_w"]}"/>',
         f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["inner"]}" stroke-width="{style["inner_w"]}"/>',
     ]
+    append_title_element(svg_parts, title, track_config)
 
     sector_label_items: list[dict[str, Any]] = []
     if bool(style.get("sector_labels")):

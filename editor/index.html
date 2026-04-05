@@ -41,6 +41,7 @@
         <section class="panel canvas-panel">
           <div class="canvas-toolbar">
             <span id="selectionLabel" class="selection-pill">Nothing selected</span>
+            <button id="selectTitleButton" class="button button-quiet" disabled>Edit title</button>
             <span id="zoomLabel" class="meta-line">100%</span>
           </div>
           <div id="canvasViewport" class="canvas-viewport">
@@ -73,6 +74,31 @@
             <button id="resetMarkerButton" class="button button-secondary">Reset marker</button>
           </section>
 
+          <section id="titleInspector" class="inspector-section hidden">
+            <p class="panel-label">Track title</p>
+            <label class="field field-inline">
+              <span>Visible</span>
+              <input id="titleVisible" type="checkbox" />
+            </label>
+            <label class="field">
+              <span>X</span>
+              <input id="titleX" type="number" step="0.1" />
+            </label>
+            <label class="field">
+              <span>Y</span>
+              <input id="titleY" type="number" step="0.1" />
+            </label>
+            <label class="field">
+              <span>Font family</span>
+              <input id="titleFontFamily" type="text" placeholder="Inter, Arial, sans-serif" />
+            </label>
+            <label class="field">
+              <span>Font size</span>
+              <input id="titleFontSize" type="number" step="0.5" min="1" placeholder="34" />
+            </label>
+            <button id="resetTitleButton" class="button button-secondary">Reset title settings</button>
+          </section>
+
           <section id="labelInspector" class="inspector-section hidden">
             <p class="panel-label">Corner label</p>
             <label class="field">
@@ -95,7 +121,15 @@
               <span>Y</span>
               <input id="labelY" type="number" step="0.1" />
             </label>
-            <button id="resetLabelButton" class="button button-secondary">Reset label position</button>
+            <label class="field">
+              <span>Font family for all labels</span>
+              <input id="labelFontFamily" type="text" placeholder="Inter, Arial, sans-serif" />
+            </label>
+            <label class="field">
+              <span>Font size for all labels</span>
+              <input id="labelFontSize" type="number" step="0.5" min="1" placeholder="18" />
+            </label>
+            <button id="resetLabelButton" class="button button-secondary">Reset label overrides</button>
           </section>
         </aside>
       </main>

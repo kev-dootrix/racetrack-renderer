@@ -127,6 +127,11 @@ h1 {
   color: #fff7f2;
 }
 
+.button-quiet {
+  padding-inline: 12px;
+  background: rgba(22, 24, 29, 0.06);
+}
+
 .button-secondary {
   width: 100%;
 }
@@ -233,6 +238,17 @@ h1 {
   font-weight: 600;
 }
 
+.field-inline {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.field-inline input[type="checkbox"] {
+  width: auto;
+  transform: scale(1.1);
+}
+
 .field input,
 .field textarea,
 .field select {
@@ -274,6 +290,10 @@ h1 {
   cursor: grab;
 }
 
+.editor-title {
+  cursor: grab;
+}
+
 .editor-marker.is-selected circle {
   stroke: var(--accent);
   stroke-width: 4px;
@@ -282,6 +302,10 @@ h1 {
 .editor-label.is-selected text {
   stroke: var(--accent);
   stroke-width: 6px;
+}
+
+.editor-title.is-selected text {
+  fill: var(--accent-deep);
 }
 
 @media (max-width: 1180px) {

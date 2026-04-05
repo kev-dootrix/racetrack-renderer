@@ -200,8 +200,11 @@ It is meant for precise mouse-based tweaks after generation:
 
 - drag turn markers to exact on-canvas positions
 - drag corner labels independently
+- move the track title or hide it entirely
 - edit corner label text
 - insert manual line breaks in labels for multi-line wrapping
+- set a global corner-label font family / font size override for the whole track
+- set per-title font family / font size overrides
 - save both the SVG and the matching `track_configs/*.json` entry so reruns keep the changes
 
 ### Run it locally
@@ -225,9 +228,11 @@ http://localhost:4173/editor/
 The editor updates the matching track config with:
 
 - `marker_position_overrides`: absolute SVG-space marker positions keyed by turn id
+- `title_settings`: optional title `x` / `y`, `hidden`, `font_family`, and `font_size`
 - `corner_labels[].x` / `corner_labels[].y`: absolute SVG-space label positions
 - `corner_labels[].name`: now supports embedded `\n` line breaks
 - `corner_labels[].anchor`: optional label anchoring (`middle`, `start`, `end`)
+- `label_settings`: optional global `font_family` / `font_size` override for all corner labels on that track
 
 The generator now honors those fields on rerender, while unchanged tracks continue to use the legacy auto-placement logic.
 

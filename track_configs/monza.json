@@ -160,5 +160,8 @@
     "y": 78.43,
     "hidden": false,
     "font_size": 44
+  },
+  "label_settings": {
+    "font_size": 17
   }
 }

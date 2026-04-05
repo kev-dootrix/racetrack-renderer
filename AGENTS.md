@@ -6,3 +6,5 @@
 - If a change is ready, stop at a clean working tree suggestion and wait for explicit user approval before committing.
 - When the user does ask to commit, summarize the intended commit scope first if there is any ambiguity.
 - Prefer small, reviewable changes and keep generated assets and source files together when they belong to the same task.
+- Do not add absolute filesystem paths to markdown or scripts. All file references and path examples must be relative to the repository root.
+- When documenting or generating assets, copy them into the repository and reference the copied local path instead of pointing at an external or machine-specific location.

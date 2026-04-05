@@ -118,6 +118,18 @@ Style resolution works in this order:
 
 That means you can keep one track config and render it in a different visual treatment just by overriding the style on the command line.
 
+### Example outputs
+
+The generator can produce very different presentation styles from the same underlying track data.
+
+Default style example:
+
+![Imola default style](./README_assets/imola-example.png)
+
+Broadcast dark style example:
+
+![Monza broadcast dark style](./README_assets/monza-example.png)
+
 ## What gets stored in each track folder
 
 Each generated track gets its own folder under the output root, named after the circuit title.
@@ -183,16 +195,18 @@ Sector boundaries are chosen differently depending on mode:
 Generate an F1 track:
 
 ```bash
-python3 generate_track_svg.py Imola --year 2024 --output-root /Users/kevinsmith/Develop/TrackMaker
+python3 generate_track_svg.py Imola --year 2024 --output-root .
 ```
 
 Generate a non-F1 geometry-only track:
 
 ```bash
-python3 generate_track_svg.py "Brands Hatch" --year 2024 --output-root /Users/kevinsmith/Develop/TrackMaker
+python3 generate_track_svg.py "Brands Hatch" --year 2024 --output-root .
 ```
 
 ## Local post-process editor
+
+![Editor](./README_assets/editor-example.png)
 
 There is now a lightweight local editor under [`editor/`](./editor) for post-processing generated SVGs.
 
@@ -235,9 +249,3 @@ The editor updates the matching track config with:
 - `label_settings`: optional global `font_family` / `font_size` override for all corner labels on that track
 
 The generator now honors those fields on rerender, while unchanged tracks continue to use the legacy auto-placement logic.
-
-## Notes
-
-- The `.cache/fastf1/` directory is used for FastF1 session caching and is intentionally not checked in.
-- The generated SVGs are intended to be publication-ready, not rough previews.
-- If you edit a file in `track_configs/`, rerun the script to regenerate the affected track.

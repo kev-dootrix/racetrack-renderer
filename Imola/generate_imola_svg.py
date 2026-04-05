@@ -9,8 +9,8 @@ from pathlib import Path
 import fastf1
 
 
-ROOT = Path("/Users/kevinsmith/Develop/TrackMaker/Imola")
-CACHE_DIR = Path("/tmp/ff1cache")
+ROOT = Path(__file__).resolve().parent
+CACHE_DIR = ROOT.parent / ".cache" / "ff1cache"
 SESSION_YEAR = 2024
 SESSION_NAME = "Emilia Romagna Grand Prix"
 SESSION_TYPE = "Q"

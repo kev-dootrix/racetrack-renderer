@@ -249,3 +249,7 @@ The editor updates the matching track config with:
 - `label_settings`: optional global `font_family` / `font_size` override for all corner labels on that track
 
 The generator now honors those fields on rerender, while unchanged tracks continue to use the legacy auto-placement logic.
+
+## License
+
+This project is licensed under the MIT License; see [`LICENSE`](./LICENSE).

@@ -20,7 +20,8 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent
 CACHE_DIR = ROOT / ".cache" / "fastf1"
-CONFIG_PATH = ROOT / "track_configs.json"
+CONFIG_DIR = ROOT / "track_configs"
+LEGACY_CONFIG_PATH = ROOT / "track_configs.json"
 
 CANVAS_W = 1240
 CANVAS_H = 860
@@ -178,14 +179,37 @@ def compact(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
 
 
+def config_file_path(track: dict[str, Any]) -> Path:
+    name = str(track.get("id") or track.get("title") or "track").strip()
+    return CONFIG_DIR / f"{slugify(name)}.json"
+
+
 def load_config() -> dict[str, Any]:
-    if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text())
+    tracks: list[dict[str, Any]] = []
+    if CONFIG_DIR.exists():
+        for path in sorted(CONFIG_DIR.glob("*.json")):
+            try:
+                tracks.append(json.loads(path.read_text()))
+            except Exception:
+                continue
+        return {"tracks": tracks}
+    if LEGACY_CONFIG_PATH.exists():
+        payload = json.loads(LEGACY_CONFIG_PATH.read_text())
+        if isinstance(payload, dict) and isinstance(payload.get("tracks"), list):
+            return payload
     return {"tracks": []}
 
 
 def save_config(config: dict[str, Any]) -> None:
-    CONFIG_PATH.write_text(json.dumps(config, indent=2) + "\n")
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    desired_paths: set[Path] = set()
+    for track in config.get("tracks", []):
+        path = config_file_path(track)
+        desired_paths.add(path)
+        path.write_text(json.dumps(track, indent=2) + "\n")
+    for path in CONFIG_DIR.glob("*.json"):
+        if path not in desired_paths:
+            path.unlink()
 
 
 def fetch_json(url: str) -> dict[str, Any]:
@@ -1651,7 +1675,7 @@ def main() -> None:
     fastf1.Cache.enable_cache(str(CACHE_DIR))
 
     config = load_config()
-    if not CONFIG_PATH.exists():
+    if not CONFIG_DIR.exists() or not any(CONFIG_DIR.glob("*.json")):
         save_config(config)
     event_lookup_failed = False
     try:

@@ -1,0 +1,91 @@
+{
+  "id": "brandshatch",
+  "title": "Brands Hatch",
+  "match_terms": [
+    "brands hatch",
+    "brandshatch",
+    "brands"
+  ],
+  "geometry_source": "f1tenth_racetrack",
+  "raceline_url": "https://raw.githubusercontent.com/f1tenth/f1tenth_racetracks/main/BrandsHatch/BrandsHatch_raceline.csv",
+  "centerline_url": "https://raw.githubusercontent.com/f1tenth/f1tenth_racetracks/main/BrandsHatch/BrandsHatch_centerline.csv",
+  "turn_count": 9,
+  "rotation_degrees": -90,
+  "marker_offset": 37.5,
+  "turn_detection_min_sep": 35,
+  "marker_spread_hints": {},
+  "corner_labels": [
+    {
+      "name": "Paddock Hill Bend",
+      "turns": [
+        "01"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Druids",
+      "turns": [
+        "02"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Graham Hill Bend",
+      "turns": [
+        "03"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Surtees",
+      "turns": [
+        "04"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Hawthorn Bend",
+      "turns": [
+        "05"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Westfield Bend",
+      "turns": [
+        "06"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Sheene Curve",
+      "turns": [
+        "07"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Stirling's",
+      "turns": [
+        "08"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Clark Curve",
+      "turns": [
+        "09"
+      ],
+      "dx": 0,
+      "dy": 0
+    }
+  ]
+}

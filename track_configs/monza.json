@@ -1,0 +1,89 @@
+{
+  "id": "monza",
+  "title": "Monza",
+  "match_terms": [
+    "monza",
+    "italian grand prix"
+  ],
+  "geometry_source": "track_database",
+  "centerline_url": "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/tracks/Monza.csv",
+  "rotation_degrees": -90,
+  "marker_offset": 37.5,
+  "marker_spread_hints": {},
+  "corner_labels": [
+    {
+      "name": "Variante del Rettifilo",
+      "turns": [
+        "01",
+        "02"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Biassono",
+      "turns": [
+        "03"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Seconda Variante",
+      "turns": [
+        "04",
+        "05"
+      ],
+      "dx": 30,
+      "dy": -40
+    },
+    {
+      "name": "Lesmo 1",
+      "turns": [
+        "06"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Lesmo 2",
+      "turns": [
+        "07"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Variante Ascari",
+      "turns": [
+        "08",
+        "09",
+        "10"
+      ],
+      "dx": 0,
+      "dy": 0
+    },
+    {
+      "name": "Parabolica",
+      "turns": [
+        "11"
+      ],
+      "dx": 0,
+      "dy": 0
+    }
+  ],
+  "generated_corner_name_candidates": [
+    "Variante del Rettifilo",
+    "Biassono",
+    "Seconda Variante",
+    "Lesmo 1",
+    "Lesmo 2",
+    "Variante Ascari",
+    "Parabolica"
+  ],
+  "generated_from": {
+    "source": "wikipedia",
+    "page_title": "Monza Circuit",
+    "strategy": "ordered_name_guess"
+  }
+}

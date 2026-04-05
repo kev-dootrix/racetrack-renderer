@@ -12,7 +12,7 @@ The current generator is [`generate_track_svg.py`](./generate_track_svg.py).
 
 At a high level, the script:
 
-1. Resolves the track name to a track config entry in [`track_configs.json`](./track_configs.json).
+1. Resolves the track name to a track config entry in [`track_configs/`](./track_configs).
 2. Chooses the best available geometry source for that track.
 3. Loads or builds the centerline.
 4. Places turn markers and corner labels.
@@ -82,7 +82,7 @@ This is the mode used for tracks such as Brands Hatch.
 
 ## Per-track config
 
-All track-specific behavior lives in [`track_configs.json`](./track_configs.json).
+All track-specific behavior lives in [`track_configs/`](./track_configs), with one JSON file per track.
 
 Useful fields include:
 
@@ -178,4 +178,4 @@ python3 generate_track_svg.py "Brands Hatch" --year 2024 --output-root /Users/ke
 
 - The `.cache/fastf1/` directory is used for FastF1 session caching and is intentionally not checked in.
 - The generated SVGs are intended to be publication-ready, not rough previews.
-- If you edit `track_configs.json`, rerun the script to regenerate the affected track.
+- If you edit a file in `track_configs/`, rerun the script to regenerate the affected track.

@@ -14,6 +14,7 @@
       "turn_count": 9,
       "rotation_degrees": -90,
       "marker_offset": 37.5,
+      "turn_detection_min_sep": 35,
       "marker_spread_hints": {},
       "corner_labels": [
         {
@@ -244,7 +245,8 @@
           "dx": -116,
           "dy": -4
         }
-      ]
+      ],
+      "geometry_source": "osm_raceway"
     },
     {
       "id": "monza",
@@ -254,6 +256,8 @@
         "monza",
         "italian grand prix"
       ],
+      "geometry_source": "track_database",
+      "centerline_url": "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/tracks/Monza.csv",
       "rotation_degrees": -90,
       "marker_offset": 37.5,
       "marker_spread_hints": {},

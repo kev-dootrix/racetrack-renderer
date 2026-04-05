@@ -16,28 +16,31 @@
     "sector_3_time": "0 days 00:00:26.256000"
   },
   "sources": [
-    "FastF1 event schedule resolution",
-    "FastF1 fastest-lap position data for circuit geometry",
+    "TUMFTM track centerline",
     "FastF1 circuit_info corner coordinates and angles for marker placement",
-    "FastF1 fastest-lap sector times mapped onto the lap trace for timing-sector boundaries"
+    "Equal-thirds sector splits derived from the centerline geometry"
   ],
+  "data_urls": {
+    "centerline": "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/tracks/Monza.csv",
+    "raceline": null
+  },
   "sector_splits": [
     {
       "sector": 1,
-      "method": "mapped from Sector1SessionTime onto position trace",
-      "distance_along_trace": 18778.467,
+      "method": "equal thirds of centerline distance",
+      "distance_along_trace": 1930.067,
       "point": {
-        "x": 14180.944,
-        "y": 5072.9
+        "x": 1559.178,
+        "y": 618.469
       }
     },
     {
       "sector": 2,
-      "method": "mapped from Sector2SessionTime onto position trace",
-      "distance_along_trace": 36877.196,
+      "method": "equal thirds of centerline distance",
+      "distance_along_trace": 3860.135,
       "point": {
-        "x": 7287.567,
-        "y": 5862.917
+        "x": 803.612,
+        "y": 761.757
       }
     }
   ],
@@ -46,6 +49,6 @@
     "rotation_degrees": -90.0,
     "corner_labels": true,
     "marker_spread_hints": false,
-    "generated_corner_name_candidates": true
+    "geometry_source": "track_database"
   }
 }

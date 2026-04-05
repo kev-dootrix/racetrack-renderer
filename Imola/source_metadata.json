@@ -16,35 +16,42 @@
     "sector_3_time": "0 days 00:00:25.416000"
   },
   "sources": [
-    "FastF1 event schedule resolution",
-    "FastF1 fastest-lap position data for circuit geometry",
+    "OpenStreetMap raceway geometry",
     "FastF1 circuit_info corner coordinates and angles for marker placement",
-    "FastF1 fastest-lap sector times mapped onto the lap trace for timing-sector boundaries"
+    "Equal-thirds sector splits derived from the centerline geometry"
   ],
+  "data_urls": {
+    "centerline": null,
+    "raceline": null
+  },
+  "data_files": {
+    "geometry": "imola_osm_raceway.json"
+  },
   "sector_splits": [
     {
       "sector": 1,
       "method": "mapped from Sector1SessionTime onto position trace",
-      "distance_along_trace": 17439.162,
+      "distance_along_trace": 1758.444,
       "point": {
-        "x": -14190.556,
-        "y": -9174.556
+        "x": -762.358,
+        "y": -499.355
       }
     },
     {
       "sector": 2,
       "method": "mapped from Sector2SessionTime onto position trace",
-      "distance_along_trace": 33328.424,
+      "distance_along_trace": 3360.606,
       "point": {
-        "x": -4755.175,
-        "y": -5386.313
+        "x": 406.082,
+        "y": -27.152
       }
     }
   ],
   "config_overrides_used": {
     "track_config_id": "imola",
+    "rotation_degrees": 0.0,
     "corner_labels": true,
     "marker_spread_hints": true,
-    "generated_corner_name_candidates": false
+    "geometry_source": "osm_raceway"
   }
 }

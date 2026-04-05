@@ -29,36 +29,36 @@
   <line class="start-line-inner" x1="879.49" y1="747.86" x2="884.27" y2="704.12"/>
   <line class="arrow-shaft" x1="885.58" y1="692.19" x2="869.27" y2="690.41"/>
   <polygon class="arrow-head" points="861.72,689.58 870.37,684.09 868.97,696.81"/>
-  <circle class="marker" cx="448.61" cy="712.74" r="18"/>
-  <text class="marker-text" x="448.61" y="713.24">01</text>
-  <circle class="marker" cx="460.51" cy="622.54" r="18"/>
-  <text class="marker-text" x="460.51" y="623.04">02</text>
-  <circle class="marker" cx="190.66" cy="642.49" r="18"/>
-  <text class="marker-text" x="190.66" y="642.99">03</text>
-  <circle class="marker" cx="191.89" cy="296.23" r="18"/>
-  <text class="marker-text" x="191.89" y="296.73">04</text>
-  <circle class="marker" cx="110.23" cy="320.79" r="18"/>
-  <text class="marker-text" x="110.23" y="321.29">05</text>
-  <circle class="marker" cx="82.47" cy="113.76" r="18"/>
-  <text class="marker-text" x="82.47" y="114.26">06</text>
-  <circle class="marker" cx="279.57" cy="86.57" r="18"/>
-  <text class="marker-text" x="279.57" y="87.07">07</text>
-  <circle class="marker" cx="552.81" cy="566.13" r="18"/>
-  <text class="marker-text" x="552.81" y="566.63">08</text>
-  <circle class="marker" cx="621.95" cy="500.75" r="18"/>
-  <text class="marker-text" x="621.95" y="501.25">09</text>
-  <circle class="marker" cx="628.69" cy="597.51" r="18"/>
-  <text class="marker-text" x="628.69" y="598.01">10</text>
-  <circle class="marker" cx="1175.81" cy="672.99" r="18"/>
-  <text class="marker-text" x="1175.81" y="673.49">11</text>
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   <text class="sector-label" fill="#fd0000" stroke="#000000" stroke-width="3" transform="rotate(5.25121 722.06 703.91)" x="722.06" y="703.91" text-anchor="middle" dominant-baseline="middle">SECTOR 1</text>
   <text class="sector-label" fill="#02a5d5" stroke="#000000" stroke-width="3" transform="rotate(54.4716 352.67 292.93)" x="352.67" y="292.93" text-anchor="middle" dominant-baseline="middle">SECTOR 2</text>
   <text class="sector-label" fill="#eecc03" stroke="#000000" stroke-width="3" transform="rotate(6.18279 850.26 586.25)" x="850.26" y="586.25" text-anchor="middle" dominant-baseline="middle">SECTOR 3</text>
-  <text class="label" x="458.33" y="669.10">Variante del Rettifilo</text>
-  <text class="label" x="239.52" y="598.71">Biassono</text>
-  <text class="label" x="156.66" y="203.49">Seconda Variante</text>
-  <text class="label" x="131.81" y="150.31">Lesmo 1</text>
-  <text class="label" x="248.67" y="139.63">Lesmo 2</text>
-  <text class="label" x="717.53" y="563.86">Variante Ascari</text>
-  <text class="label" x="1102.37" y="663.94">Parabolica</text>
-</svg>
+  
+  
+  
+  
+  
+  
+  
+<g data-editor-layer="markers"><g class="editor-marker" data-turn="01"><circle class="marker" data-turn="01" cx="456.36" cy="710.02" r="18"/><text class="marker-text" data-turn="01" x="456.36" y="710.52">01</text></g><g class="editor-marker" data-turn="02"><circle class="marker" data-turn="02" cx="458.30" cy="631.00" r="18"/><text class="marker-text" data-turn="02" x="458.30" y="631.50">02</text></g><g class="editor-marker" data-turn="03"><circle class="marker" data-turn="03" cx="190.23" cy="635.64" r="18"/><text class="marker-text" data-turn="03" x="190.23" y="636.14">03</text></g><g class="editor-marker" data-turn="04"><circle class="marker" data-turn="04" cx="190.66" cy="320.02" r="18"/><text class="marker-text" data-turn="04" x="190.66" y="320.52">04</text></g><g class="editor-marker" data-turn="05"><circle class="marker" data-turn="05" cx="108.61" cy="322.57" r="18"/><text class="marker-text" data-turn="05" x="108.61" y="323.07">05</text></g><g class="editor-marker" data-turn="06"><circle class="marker" data-turn="06" cx="77.75" cy="129.86" r="18"/><text class="marker-text" data-turn="06" x="77.75" y="130.36">06</text></g><g class="editor-marker" data-turn="07"><circle class="marker" data-turn="07" cx="267.11" cy="96.40" r="18"/><text class="marker-text" data-turn="07" x="267.11" y="96.90">07</text></g><g class="editor-marker" data-turn="08"><circle class="marker" data-turn="08" cx="546.78" cy="557.45" r="18"/><text class="marker-text" data-turn="08" x="546.78" y="557.95">08</text></g><g class="editor-marker" data-turn="09"><circle class="marker" data-turn="09" cx="621.32" cy="505.19" r="18"/><text class="marker-text" data-turn="09" x="621.32" y="505.69">09</text></g><g class="editor-marker" data-turn="10"><circle class="marker" data-turn="10" cx="630.52" cy="590.83" r="18"/><text class="marker-text" data-turn="10" x="630.52" y="591.33">10</text></g><g class="editor-marker" data-turn="11"><circle class="marker" data-turn="11" cx="1173.32" cy="660.43" r="18"/><text class="marker-text" data-turn="11" x="1173.32" y="660.93">11</text></g></g><g data-editor-layer="labels"><g class="editor-label" data-label-index="0"><text class="label" data-label-index="0" x="544.56" y="644.29" text-anchor="middle"><tspan x="544.56" y="634.84">Variante </tspan><tspan x="544.56" y="653.74">del Rettifilo</tspan></text></g><g class="editor-label" data-label-index="1"><text class="label" data-label-index="1" x="301.87" y="619.70" text-anchor="middle">Biassono</text></g><g class="editor-label" data-label-index="2"><text class="label" data-label-index="2" x="240.58" y="379.43" text-anchor="middle"><tspan x="240.58" y="369.98">Seconda </tspan><tspan x="240.58" y="388.88">Variante</tspan></text></g><g class="editor-label" data-label-index="3"><text class="label" data-label-index="3" x="75.50" y="100.47" text-anchor="middle">Lesmo 1</text></g><g class="editor-label" data-label-index="4"><text class="label" data-label-index="4" x="286.33" y="70.02" text-anchor="middle">Lesmo 2</text></g><g class="editor-label" data-label-index="5"><text class="label" data-label-index="5" x="696.42" y="507.66" text-anchor="middle"><tspan x="696.42" y="498.21">Variante </tspan><tspan x="696.42" y="517.11">Ascari</tspan></text></g><g class="editor-label" data-label-index="6"><text class="label" data-label-index="6" x="1059.97" y="671.87" text-anchor="middle">Parabolica</text></g></g></svg>

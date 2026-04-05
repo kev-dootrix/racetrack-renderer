@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TrackMaker Editor</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">TrackMaker</p>
+          <h1>Post-process SVG editor</h1>
+        </div>
+        <div class="toolbar">
+          <button id="connectButton" class="button button-primary">Choose repo</button>
+          <button id="saveButton" class="button" disabled>Save</button>
+          <button id="fitButton" class="button" disabled>Fit view</button>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="panel sidebar">
+          <section>
+            <p class="panel-label">Tracks</p>
+            <div id="trackList" class="track-list empty-state">
+              Choose the TrackMaker repo to load generated SVG tracks.
+            </div>
+          </section>
+          <section class="sidebar-meta">
+            <p class="panel-label">Status</p>
+            <p id="repoLabel" class="meta-line">No repo selected.</p>
+            <p id="trackMeta" class="meta-line">No track loaded.</p>
+            <p class="shortcut-note">
+              Drag markers or labels with the mouse. Use arrow keys to nudge the current selection and hold Shift for larger moves.
+            </p>
+          </section>
+        </aside>
+
+        <section class="panel canvas-panel">
+          <div class="canvas-toolbar">
+            <span id="selectionLabel" class="selection-pill">Nothing selected</span>
+            <span id="zoomLabel" class="meta-line">100%</span>
+          </div>
+          <div id="canvasViewport" class="canvas-viewport">
+            <div id="canvasStage" class="canvas-stage"></div>
+          </div>
+          <p id="statusMessage" class="status-line">
+            Run this editor from a localhost server in Chrome or Edge so it can ask for directory access.
+          </p>
+        </section>
+
+        <aside class="panel inspector">
+          <section id="emptyInspector" class="empty-state">
+            Select a turn marker or corner label to edit it precisely.
+          </section>
+
+          <section id="markerInspector" class="inspector-section hidden">
+            <p class="panel-label">Turn marker</p>
+            <label class="field">
+              <span>Turn</span>
+              <input id="markerTurn" type="text" readonly />
+            </label>
+            <label class="field">
+              <span>X</span>
+              <input id="markerX" type="number" step="0.1" />
+            </label>
+            <label class="field">
+              <span>Y</span>
+              <input id="markerY" type="number" step="0.1" />
+            </label>
+            <button id="resetMarkerButton" class="button button-secondary">Reset marker</button>
+          </section>
+
+          <section id="labelInspector" class="inspector-section hidden">
+            <p class="panel-label">Corner label</p>
+            <label class="field">
+              <span>Text</span>
+              <textarea id="labelName" rows="4"></textarea>
+            </label>
+            <label class="field">
+              <span>Anchor</span>
+              <select id="labelAnchor">
+                <option value="middle">Center</option>
+                <option value="start">Left</option>
+                <option value="end">Right</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>X</span>
+              <input id="labelX" type="number" step="0.1" />
+            </label>
+            <label class="field">
+              <span>Y</span>
+              <input id="labelY" type="number" step="0.1" />
+            </label>
+            <button id="resetLabelButton" class="button button-secondary">Reset label position</button>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

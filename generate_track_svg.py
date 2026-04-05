@@ -12,6 +12,7 @@ import sys
 from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -1200,6 +1201,7 @@ def autogenerate_track_config(
         "style": style_name,
         "rotation_degrees": 0.0,
         "marker_offset": DEFAULT_MARKER_OFFSET,
+        "marker_position_overrides": {},
         "marker_spread_hints": {},
         "corner_labels": guessed_labels,
         "generated_corner_name_candidates": candidate_names,
@@ -1462,9 +1464,10 @@ def render_geometry_only_track(
         ],
         "config_overrides_used": {
             "track_config_id": track_config.get("id"),
-            "style": style.get("name", style_name),
+            "style": style.get("name", DEFAULT_STYLE_NAME),
             "rotation_degrees": rotation_degrees,
             "corner_labels": bool(track_config.get("corner_labels")),
+            "marker_position_overrides": bool(track_config.get("marker_position_overrides")),
             "marker_spread_hints": bool(track_config.get("marker_spread_hints")),
             "geometry_source": source_label,
             "geometry_only": True,
@@ -1517,14 +1520,9 @@ def render_geometry_only_track(
     arrow_right_x = arrow_tip_x - tangent_ux * ARROW_HEAD - normal_ux * (ARROW_HEAD * 0.8)
     arrow_right_y = arrow_tip_y - tangent_uy * ARROW_HEAD - normal_uy * (ARROW_HEAD * 0.8)
 
-    marker_offset = float(track_config.get("marker_offset", DEFAULT_MARKER_OFFSET))
-    spread_hints = {
-        key: (float(value[0]), float(value[1]))
-        for key, value in track_config.get("marker_spread_hints", {}).items()
-    }
-    marker_positions = marker_positions_for_turns(turns, sx, sy, marker_offset, spread_hints)
+    marker_positions = build_marker_positions(turns, track_config, sx, sy)
     label_positions = build_label_positions(track_config.get("corner_labels", []), turn_lookup, sx, sy)
-    label_positions = resolve_label_collisions(label_positions, marker_positions)
+    label_positions = resolve_label_collisions(label_positions, marker_positions, float(style["label_size"]))
 
     comparison_centerline_points: list[tuple[float, float]] = []
     comparison_centerline_csv = str(track_config.get("comparison_centerline_csv", "")).strip()
@@ -1622,12 +1620,7 @@ def render_geometry_only_track(
             f'  <polyline points="{" ".join(f"{x:.2f},{y:.2f}" for x, y in comparison_centerline_points)}" fill="none" stroke="{style["comparison_centerline_color"]}" stroke-width="2"/>'
         )
 
-    for turn in turns:
-        x, y = marker_positions[turn.key]
-        svg_parts.append(f'  <circle class="marker" cx="{x:.2f}" cy="{y:.2f}" r="{MARKER_R}"/>')
-        svg_parts.append(
-            f'  <text class="marker-text" x="{x:.2f}" y="{y + 0.5:.2f}">{turn.key}</text>'
-        )
+    append_marker_elements(svg_parts, turns, marker_positions)
 
     for item in sector_label_items:
         svg_parts.append(
@@ -1637,10 +1630,7 @@ def render_geometry_only_track(
             f'{item["text"]}</text>'
         )
 
-    for item in label_positions:
-        svg_parts.append(
-            f'  <text class="label" x="{item["x"]:.2f}" y="{item["y"]:.2f}" text-anchor="{item.get("anchor", "middle")}">{item["name"]}</text>'
-        )
+    append_label_elements(svg_parts, label_positions, float(style["label_size"]))
 
     svg_parts.extend(
         [
@@ -1716,19 +1706,55 @@ def marker_positions_for_turns(
     return {key: (value[0], value[1]) for key, value in positions.items()}
 
 
-def build_label_positions(label_specs: list[dict[str, Any]], turn_lookup: dict[str, Turn], sx, sy) -> list[dict[str, float | str]]:
+def parse_marker_position_overrides(track_config: dict[str, Any]) -> dict[str, tuple[float, float]]:
+    overrides: dict[str, tuple[float, float]] = {}
+    for key, value in track_config.get("marker_position_overrides", {}).items():
+        if not isinstance(value, dict):
+            continue
+        try:
+            overrides[str(key)] = (float(value["x"]), float(value["y"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return overrides
+
+
+def build_marker_positions(turns: list[Turn], track_config: dict[str, Any], sx, sy) -> dict[str, tuple[float, float]]:
+    marker_offset = float(track_config.get("marker_offset", DEFAULT_MARKER_OFFSET))
+    spread_hints = {
+        key: (float(value[0]), float(value[1]))
+        for key, value in track_config.get("marker_spread_hints", {}).items()
+    }
+    positions = marker_positions_for_turns(turns, sx, sy, marker_offset, spread_hints)
+    for key, override in parse_marker_position_overrides(track_config).items():
+        if key in positions:
+            positions[key] = override
+    return positions
+
+
+def build_label_positions(
+    label_specs: list[dict[str, Any]],
+    turn_lookup: dict[str, Turn],
+    sx,
+    sy,
+) -> list[dict[str, float | str | int | bool]]:
     labels = []
-    for spec in label_specs:
+    for idx, spec in enumerate(label_specs):
         selected_turns = [turn_lookup[key] for key in spec.get("turns", []) if key in turn_lookup]
         if not selected_turns:
             continue
         xs = [sx(turn.point) for turn in selected_turns]
         ys = [sy(turn.point) for turn in selected_turns]
+        has_absolute_position = spec.get("x") is not None and spec.get("y") is not None
+        x = float(spec["x"]) if has_absolute_position else sum(xs) / len(xs) + float(spec.get("dx", 0))
+        y = float(spec["y"]) if has_absolute_position else sum(ys) / len(ys) + float(spec.get("dy", 0))
         labels.append(
             {
-                "name": spec["name"],
-                "x": sum(xs) / len(xs) + float(spec.get("dx", 0)),
-                "y": sum(ys) / len(ys) + float(spec.get("dy", 0)),
+                "index": idx,
+                "name": str(spec["name"]),
+                "x": x,
+                "y": y,
+                "anchor": str(spec.get("anchor", "middle")),
+                "manual_position": has_absolute_position,
             }
         )
     return labels
@@ -1763,25 +1789,37 @@ def rect_circle_intersects(
 
 
 def resolve_label_collisions(
-    labels: list[dict[str, float | str]],
+    labels: list[dict[str, float | str | int | bool]],
     marker_positions: dict[str, tuple[float, float]],
-) -> list[dict[str, float | str]]:
-    resolved: list[dict[str, float | str]] = []
+    label_size: float,
+) -> list[dict[str, float | str | int | bool]]:
+    resolved: list[dict[str, float | str | int | bool]] = []
     marker_items = list(marker_positions.items())
     for label in labels:
+        if bool(label.get("manual_position")):
+            resolved.append(dict(label))
+            continue
         x = float(label["x"])
         y = float(label["y"])
         name = str(label["name"])
-        width = max(54.0, len(name) * 8.4 + 12.0)
+        anchor = str(label.get("anchor", "middle"))
+        lines = name.split("\n") or [name]
+        longest_line = max((len(line) for line in lines), default=0)
+        width = max(54.0, longest_line * 8.4 + 12.0)
         half_w = width / 2.0
-        half_h = 10.0
+        half_h = max(10.0, ((len(lines) - 1) * label_size * 1.05 + label_size) / 2.0)
         for _ in range(36):
             colliding = None
             best_dist = None
             for key, (mx, my) in marker_items:
-                if not rect_circle_intersects(x, y, half_w, half_h, mx, my, MARKER_R + 5):
+                rect_x = x
+                if anchor == "start":
+                    rect_x = x + half_w
+                elif anchor == "end":
+                    rect_x = x - half_w
+                if not rect_circle_intersects(rect_x, y, half_w, half_h, mx, my, MARKER_R + 5):
                     continue
-                d = math.hypot(mx - x, my - y)
+                d = math.hypot(mx - rect_x, my - y)
                 if best_dist is None or d < best_dist:
                     best_dist = d
                     colliding = (mx, my)
@@ -1798,8 +1836,55 @@ def resolve_label_collisions(
             push = max(2.0, target_clearance - length)
             x += (vx / length) * push
             y += (vy / length) * push
-        resolved.append({"name": name, "x": x, "y": y})
+        adjusted = dict(label)
+        adjusted["x"] = x
+        adjusted["y"] = y
+        resolved.append(adjusted)
     return resolved
+
+
+def build_marker_svg_elements(turn: Turn, x: float, y: float) -> list[str]:
+    safe_key = escape(turn.key)
+    return [
+        f'  <circle class="marker" data-turn="{safe_key}" cx="{x:.2f}" cy="{y:.2f}" r="{MARKER_R}"/>',
+        f'  <text class="marker-text" data-turn="{safe_key}" x="{x:.2f}" y="{y + 0.5:.2f}">{safe_key}</text>',
+    ]
+
+
+def append_marker_elements(svg_parts: list[str], turns: list[Turn], marker_positions: dict[str, tuple[float, float]]) -> None:
+    for turn in turns:
+        x, y = marker_positions[turn.key]
+        svg_parts.extend(build_marker_svg_elements(turn, x, y))
+
+
+def build_label_svg_element(item: dict[str, float | str | int | bool], label_size: float) -> str:
+    x = float(item["x"])
+    y = float(item["y"])
+    anchor = escape(str(item.get("anchor", "middle")))
+    label_index = int(item.get("index", 0))
+    lines = str(item["name"]).split("\n")
+    attrs = (
+        f'class="label" data-label-index="{label_index}" '
+        f'x="{x:.2f}" y="{y:.2f}" text-anchor="{anchor}"'
+    )
+    if len(lines) <= 1:
+        return f'  <text {attrs}>{escape(lines[0])}</text>'
+
+    line_height = label_size * 1.05
+    tspans = []
+    for idx, line in enumerate(lines):
+        line_y = y + (idx - (len(lines) - 1) / 2.0) * line_height
+        tspans.append(f'<tspan x="{x:.2f}" y="{line_y:.2f}">{escape(line)}</tspan>')
+    return f'  <text {attrs}>{"".join(tspans)}</text>'
+
+
+def append_label_elements(
+    svg_parts: list[str],
+    label_positions: list[dict[str, float | str | int | bool]],
+    label_size: float,
+) -> None:
+    for item in label_positions:
+        svg_parts.append(build_label_svg_element(item, label_size))
 
 
 def normalize_upright_angle(angle_deg: float) -> float:
@@ -2346,6 +2431,7 @@ def main() -> None:
                 "style": style.get("name", style_name),
                 "rotation_degrees": rotation_degrees,
                 "corner_labels": bool(track_config.get("corner_labels")),
+                "marker_position_overrides": bool(track_config.get("marker_position_overrides")),
                 "marker_spread_hints": bool(track_config.get("marker_spread_hints")),
                 "generated_corner_name_candidates": bool(track_config.get("generated_corner_name_candidates")),
             },
@@ -2400,14 +2486,9 @@ def main() -> None:
     arrow_right_x = arrow_tip_x - tangent_ux * ARROW_HEAD - normal_ux * (ARROW_HEAD * 0.8)
     arrow_right_y = arrow_tip_y - tangent_uy * ARROW_HEAD - normal_uy * (ARROW_HEAD * 0.8)
 
-    marker_offset = float(track_config.get("marker_offset", DEFAULT_MARKER_OFFSET))
-    spread_hints = {
-        key: (float(value[0]), float(value[1]))
-        for key, value in track_config.get("marker_spread_hints", {}).items()
-    }
-    marker_positions = marker_positions_for_turns(turns, sx, sy, marker_offset, spread_hints)
+    marker_positions = build_marker_positions(turns, track_config, sx, sy)
     label_positions = build_label_positions(track_config.get("corner_labels", []), turn_lookup, sx, sy)
-    label_positions = resolve_label_collisions(label_positions, marker_positions)
+    label_positions = resolve_label_collisions(label_positions, marker_positions, float(style["label_size"]))
     debug_centerline = bool(track_config.get("debug_centerline"))
     debug_centerline_width = float(track_config.get("debug_centerline_width", 2.0))
     comparison_centerline_csv = str(track_config.get("comparison_centerline_csv", "")).strip()
@@ -2510,10 +2591,7 @@ def main() -> None:
         ]
     )
 
-    for turn in turns:
-        x, y = marker_positions[turn.key]
-        svg_parts.append(f'  <circle class="marker" cx="{x:.2f}" cy="{y:.2f}" r="{MARKER_R}"/>')
-        svg_parts.append(f'  <text class="marker-text" x="{x:.2f}" y="{y + 0.5:.2f}">{turn.key}</text>')
+    append_marker_elements(svg_parts, turns, marker_positions)
 
     for item in sector_label_items:
         svg_parts.append(
@@ -2523,8 +2601,7 @@ def main() -> None:
             f'{item["text"]}</text>'
         )
 
-    for label in label_positions:
-        svg_parts.append(f'  <text class="label" x="{label["x"]:.2f}" y="{label["y"]:.2f}">{label["name"]}</text>')
+    append_label_elements(svg_parts, label_positions, float(style["label_size"]))
 
     if debug_centerline:
         svg_parts.append(

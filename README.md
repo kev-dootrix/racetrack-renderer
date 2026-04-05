@@ -192,6 +192,45 @@ Generate a non-F1 geometry-only track:
 python3 generate_track_svg.py "Brands Hatch" --year 2024 --output-root /Users/kevinsmith/Develop/TrackMaker
 ```
 
+## Local post-process editor
+
+There is now a lightweight local editor under [`editor/`](./editor) for post-processing generated SVGs.
+
+It is meant for precise mouse-based tweaks after generation:
+
+- drag turn markers to exact on-canvas positions
+- drag corner labels independently
+- edit corner label text
+- insert manual line breaks in labels for multi-line wrapping
+- save both the SVG and the matching `track_configs/*.json` entry so reruns keep the changes
+
+### Run it locally
+
+The editor uses the browser File System Access API, so it should be served from `localhost` in a Chromium-based browser.
+
+From the repo root:
+
+```bash
+python3 -m http.server 4173
+```
+
+Then open:
+
+```text
+http://localhost:4173/editor/
+```
+
+### What the editor writes back
+
+The editor updates the matching track config with:
+
+- `marker_position_overrides`: absolute SVG-space marker positions keyed by turn id
+- `corner_labels[].x` / `corner_labels[].y`: absolute SVG-space label positions
+- `corner_labels[].name`: now supports embedded `\n` line breaks
+- `corner_labels[].anchor`: optional label anchoring (`middle`, `start`, `end`)
+
+The generator now honors those fields on rerender, while unchanged tracks continue to use the legacy auto-placement logic.
+
 ## Notes
 
 - The `.cache/fastf1/` directory is used for FastF1 session caching and is intentionally not checked in.

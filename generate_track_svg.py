@@ -87,6 +87,8 @@ STYLE_DEFAULTS: dict[str, Any] = {
     "sector_label_weight": 800,
     "sector_label_font": "Inter, Arial, sans-serif",
     "sector_label_letter_spacing": 0.0,
+    "sector_label_anchor_ratio": 0.5,
+    "sector_label_gap_extra": 8.0,
     "start_line_outer": "#121528",
     "start_line_inner": "#ffffff",
     "arrow_color": "#121528",
@@ -284,6 +286,20 @@ def load_styles() -> dict[str, dict[str, Any]]:
 def resolve_style(style_name: str | None, styles: dict[str, dict[str, Any]]) -> dict[str, Any]:
     key = compact_key(style_name or DEFAULT_STYLE_NAME)
     return styles.get(key, styles[compact_key(DEFAULT_STYLE_NAME)])
+
+
+def style_font_face_rules(style: dict[str, Any]) -> list[str]:
+    fonts = " ".join(
+        str(style.get(key, ""))
+        for key in ("title_font", "label_font", "sector_label_font")
+    )
+    rules: list[str] = []
+    if "Orbitron" in fonts:
+        for weight in (600, 700, 800):
+            rules.append(
+                f"    @font-face {{ font-family: 'Orbitron'; font-style: normal; font-weight: {weight}; src: url('../fonts/orbitron/Orbitron-{weight}.ttf') format('truetype'); }}"
+            )
+    return rules
 
 
 def fetch_json(url: str) -> dict[str, Any]:
@@ -1544,6 +1560,7 @@ def render_geometry_only_track(
     svg_parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{CANVAS_W}" height="{CANVAS_H}" viewBox="0 0 {CANVAS_W} {CANVAS_H}" fill="none">',
         "  <style>",
+        *style_font_face_rules(style),
         f'    .title {{ font: {style["title_weight"]} {style["title_size"]}px {style["title_font"]}; fill: {style["title_fill"]}; }}',
         f'    .track {{ fill: none; stroke-linejoin: {style["track_join"]}; stroke-linecap: {style["track_cap"]}; }}',
         f'    .sector {{ fill: none; stroke-linejoin: {style["sector_join"]}; stroke-linecap: {style["sector_cap"]}; }}',
@@ -1560,20 +1577,44 @@ def render_geometry_only_track(
         f'  <text class="title" x="{PADDING_X}" y="62">{title}</text>',
         f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["outer"]}" stroke-width="{style["outer_w"]}"/>',
         f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["inner"]}" stroke-width="{style["inner_w"]}"/>',
-        f'  <path id="{sector_paths[0]}" class="sector" d="{to_svg_path(sector_svg_points[0])}" stroke="{style["s1"]}" stroke-width="{style["sector_w"]}"/>',
-        f'  <path id="{sector_paths[1]}" class="sector" d="{to_svg_path(sector_svg_points[1])}" stroke="{style["s2"]}" stroke-width="{style["sector_w"]}"/>',
-        f'  <path id="{sector_paths[2]}" class="sector" d="{to_svg_path(sector_svg_points[2])}" stroke="{style["s3"]}" stroke-width="{style["sector_w"]}"/>',
     ]
 
+    sector_label_items: list[dict[str, Any]] = []
     if bool(style.get("sector_labels")):
         sector_label_fill_mode = str(style.get("sector_label_fill_mode", "sector")).lower()
         sector_label_stroke = str(style.get("sector_label_stroke", style["bg"]))
         sector_label_stroke_w = float(style.get("sector_label_stroke_w", 5))
-        for idx, sector_id in enumerate(sector_paths, start=1):
+        sector_label_font_size = float(style.get("sector_label_size", 14))
+        sector_label_anchor_ratio = float(style.get("sector_label_anchor_ratio", 0.5))
+        sector_label_gap_extra = float(style.get("sector_label_gap_extra", 8.0))
+        for idx, sector_points in enumerate(sector_svg_points, start=1):
+            label_text = f"SECTOR {idx}"
+            layout = build_sector_label_layout(sector_points, label_text, sector_label_font_size, sector_label_anchor_ratio, sector_label_gap_extra)
             fill = style[f"s{idx}"] if sector_label_fill_mode != "fixed" else str(style.get("sector_label_fill", style[f"s{idx}"]))
+            if layout and layout["segments"]:
+                for segment in layout["segments"]:
+                    svg_parts.append(
+                        f'  <path class="sector" d="{to_svg_path([(point.x, point.y) for point in segment])}" stroke="{style[f"s{idx}"]}" stroke-width="{style["sector_w"]}"/>'
+                    )
+                sector_label_items.append(
+                    {
+                        "text": label_text,
+                        "fill": fill,
+                        "x": layout["x"],
+                        "y": layout["y"],
+                        "angle": layout["angle"],
+                        "stroke": sector_label_stroke,
+                        "stroke_w": sector_label_stroke_w,
+                    }
+                )
+            else:
+                svg_parts.append(
+                    f'  <path id="{sector_paths[idx - 1]}" class="sector" d="{to_svg_path(sector_points)}" stroke="{style[f"s{idx}"]}" stroke-width="{style["sector_w"]}"/>'
+                )
+    else:
+        for idx, sector_points in enumerate(sector_svg_points, start=1):
             svg_parts.append(
-                f'  <text class="sector-label" fill="{fill}" stroke="{sector_label_stroke}" stroke-width="{sector_label_stroke_w:g}">'
-                f'<textPath href="#{sector_id}" startOffset="50%" text-anchor="middle">SECTOR {idx}</textPath></text>'
+                f'  <path id="{sector_paths[idx - 1]}" class="sector" d="{to_svg_path(sector_points)}" stroke="{style[f"s{idx}"]}" stroke-width="{style["sector_w"]}"/>'
             )
 
     if comparison_centerline_points:
@@ -1586,6 +1627,14 @@ def render_geometry_only_track(
         svg_parts.append(f'  <circle class="marker" cx="{x:.2f}" cy="{y:.2f}" r="{MARKER_R}"/>')
         svg_parts.append(
             f'  <text class="marker-text" x="{x:.2f}" y="{y + 0.5:.2f}">{turn.key}</text>'
+        )
+
+    for item in sector_label_items:
+        svg_parts.append(
+            f'  <text class="sector-label" fill="{item["fill"]}" stroke="{item["stroke"]}" stroke-width="{float(item["stroke_w"]):g}" '
+            f'transform="rotate({float(item["angle"]):g} {float(item["x"]):.2f} {float(item["y"]):.2f})" '
+            f'x="{float(item["x"]):.2f}" y="{float(item["y"]):.2f}" text-anchor="middle" dominant-baseline="middle">'
+            f'{item["text"]}</text>'
         )
 
     for item in label_positions:
@@ -1751,6 +1800,146 @@ def resolve_label_collisions(
             y += (vy / length) * push
         resolved.append({"name": name, "x": x, "y": y})
     return resolved
+
+
+def normalize_upright_angle(angle_deg: float) -> float:
+    angle = ((angle_deg + 180.0) % 360.0) - 180.0
+    if angle > 90.0:
+        angle -= 180.0
+    if angle < -90.0:
+        angle += 180.0
+    return angle
+
+
+def shortest_angle_diff(a_deg: float, b_deg: float) -> float:
+    return ((a_deg - b_deg + 180.0) % 360.0) - 180.0
+
+
+def build_sector_label_layout(
+    sector_points: list[tuple[float, float]],
+    label_text: str,
+    label_size: float,
+    anchor_ratio: float,
+    gap_extra: float,
+) -> dict[str, Any] | None:
+    if len(sector_points) < 2:
+        return None
+    points = [Point(x, y) for x, y in sector_points]
+    cum = cumulative_dist(points)
+    total = cum[-1] if cum else 0.0
+    if total <= 0.0:
+        return None
+
+    def window_metrics(start_d: float, end_d: float) -> tuple[float, float, float] | None:
+        window = slice_path(points, cum, start_d, end_d)
+        if len(window) < 2:
+            return None
+        path_len = 0.0
+        max_turn = 0.0
+        for i in range(1, len(window)):
+            path_len += dist(window[i - 1], window[i])
+        if path_len <= 0.0:
+            return None
+        chord = dist(window[0], window[-1])
+        if len(window) >= 3:
+            for i in range(1, len(window) - 1):
+                h1 = math.degrees(math.atan2(window[i].y - window[i - 1].y, window[i].x - window[i - 1].x))
+                h2 = math.degrees(math.atan2(window[i + 1].y - window[i].y, window[i + 1].x - window[i].x))
+                max_turn = max(max_turn, abs(shortest_angle_diff(h2, h1)))
+        return chord / path_len, max_turn, path_len
+
+    analysis_span = max(label_size * 2.8, min(total * 0.12, 80.0))
+    straight_threshold = 9.0
+    current_run: list[int] = []
+    straight_runs: list[list[int]] = []
+    fallback_idx = 1
+    fallback_turn = float("inf")
+
+    for idx in range(1, len(points) - 1):
+        d = cum[idx]
+        start_d = max(0.0, d - analysis_span / 2.0)
+        end_d = min(total, d + analysis_span / 2.0)
+        metrics = window_metrics(start_d, end_d)
+        if metrics is None:
+            continue
+        straightness, max_turn, path_len = metrics
+        p_before = interpolate_track_point(points, cum, start_d)
+        p_after = interpolate_track_point(points, cum, end_d)
+        heading_before = math.degrees(math.atan2(points[idx].y - p_before.y, points[idx].x - p_before.x))
+        heading_after = math.degrees(math.atan2(p_after.y - points[idx].y, p_after.x - points[idx].x))
+        turn = abs(shortest_angle_diff(heading_after, heading_before))
+        if turn < fallback_turn:
+            fallback_turn = turn
+            fallback_idx = idx
+        if turn <= straight_threshold:
+            current_run.append(idx)
+        else:
+            if current_run:
+                straight_runs.append(list(current_run))
+                current_run = []
+
+    if current_run:
+        straight_runs.append(list(current_run))
+
+    best_run: list[int] | None = None
+    best_score = float("-inf")
+    best_window_span = analysis_span
+    for run in straight_runs:
+        start_idx = run[0]
+        end_idx = run[-1]
+        start_d = cum[start_idx]
+        end_d = cum[end_idx]
+        path_span = end_d - start_d
+        if path_span < max(label_size * 1.9, 28.0):
+            continue
+        metrics = window_metrics(start_d, end_d)
+        if metrics is None:
+            continue
+        straightness, max_turn, path_len = metrics
+        score = (straightness * 120.0) - (max_turn * 1.5) + (path_len * 0.02)
+        if score > best_score:
+            best_score = score
+            best_run = run
+            best_window_span = path_span
+
+    anchor_ratio = max(0.0, min(1.0, anchor_ratio))
+
+    if best_run:
+        run_start = cum[best_run[0]]
+        run_end = cum[best_run[-1]]
+        center_d = run_start + (run_end - run_start) * anchor_ratio
+        p1 = interpolate_track_point(points, cum, max(0.0, center_d - best_window_span / 2.0))
+        p2 = interpolate_track_point(points, cum, min(total, center_d + best_window_span / 2.0))
+        label_point = interpolate_track_point(points, cum, center_d)
+    else:
+        mid_idx = fallback_idx
+        center_d = cum[mid_idx]
+        p1 = interpolate_track_point(points, cum, max(0.0, center_d - best_window_span / 2.0))
+        p2 = interpolate_track_point(points, cum, min(total, center_d + best_window_span / 2.0))
+        label_point = interpolate_track_point(points, cum, center_d)
+    angle = normalize_upright_angle(math.degrees(math.atan2(p2.y - p1.y, p2.x - p1.x)))
+
+    estimated_width = max(24.0, len(label_text) * label_size * 0.52 + 6.0)
+    gap = estimated_width + float(gap_extra)
+    before_end = max(0.0, center_d - gap / 2.0)
+    after_start = min(total, center_d + gap / 2.0)
+
+    segments: list[list[Point]] = []
+    if before_end > 0.0:
+        before = slice_path(points, cum, 0.0, before_end)
+        if len(before) >= 2:
+            segments.append(before)
+    if after_start < total:
+        after = slice_path(points, cum, after_start, total)
+        if len(after) >= 2:
+            segments.append(after)
+
+    return {
+        "x": label_point.x,
+        "y": label_point.y,
+        "angle": angle,
+        "segments": segments,
+    }
 
 
 def main() -> None:
@@ -2255,6 +2444,7 @@ def main() -> None:
     svg_parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{CANVAS_W}" height="{CANVAS_H}" viewBox="0 0 {CANVAS_W} {CANVAS_H}" fill="none">',
         "  <style>",
+        *style_font_face_rules(style),
         f'    .title {{ font: {style["title_weight"]} {style["title_size"]}px {style["title_font"]}; fill: {style["title_fill"]}; }}',
         f'    .track {{ fill: none; stroke-linejoin: {style["track_join"]}; stroke-linecap: {style["track_cap"]}; }}',
         f'    .sector {{ fill: none; stroke-linejoin: {style["sector_join"]}; stroke-linecap: {style["sector_cap"]}; }}',
@@ -2271,20 +2461,44 @@ def main() -> None:
         f'  <text class="title" x="{PADDING_X}" y="62">{title}</text>',
         f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["outer"]}" stroke-width="{style["outer_w"]}"/>',
         f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["inner"]}" stroke-width="{style["inner_w"]}"/>',
-        f'  <path id="{sector_paths[0]}" class="sector" d="{to_svg_path(sector_svg_points[0])}" stroke="{style["s1"]}" stroke-width="{style["sector_w"]}"/>',
-        f'  <path id="{sector_paths[1]}" class="sector" d="{to_svg_path(sector_svg_points[1])}" stroke="{style["s2"]}" stroke-width="{style["sector_w"]}"/>',
-        f'  <path id="{sector_paths[2]}" class="sector" d="{to_svg_path(sector_svg_points[2])}" stroke="{style["s3"]}" stroke-width="{style["sector_w"]}"/>',
     ]
 
+    sector_label_items: list[dict[str, Any]] = []
     if bool(style.get("sector_labels")):
         sector_label_fill_mode = str(style.get("sector_label_fill_mode", "sector")).lower()
         sector_label_stroke = str(style.get("sector_label_stroke", style["bg"]))
         sector_label_stroke_w = float(style.get("sector_label_stroke_w", 5))
-        for idx, sector_id in enumerate(sector_paths, start=1):
+        sector_label_font_size = float(style.get("sector_label_size", 14))
+        sector_label_anchor_ratio = float(style.get("sector_label_anchor_ratio", 0.5))
+        sector_label_gap_extra = float(style.get("sector_label_gap_extra", 8.0))
+        for idx, sector_points in enumerate(sector_svg_points, start=1):
+            label_text = f"SECTOR {idx}"
+            layout = build_sector_label_layout(sector_points, label_text, sector_label_font_size, sector_label_anchor_ratio, sector_label_gap_extra)
             fill = style[f"s{idx}"] if sector_label_fill_mode != "fixed" else str(style.get("sector_label_fill", style[f"s{idx}"]))
+            if layout and layout["segments"]:
+                for segment in layout["segments"]:
+                    svg_parts.append(
+                        f'  <path class="sector" d="{to_svg_path([(point.x, point.y) for point in segment])}" stroke="{style[f"s{idx}"]}" stroke-width="{style["sector_w"]}"/>'
+                    )
+                sector_label_items.append(
+                    {
+                        "text": label_text,
+                        "fill": fill,
+                        "x": layout["x"],
+                        "y": layout["y"],
+                        "angle": layout["angle"],
+                        "stroke": sector_label_stroke,
+                        "stroke_w": sector_label_stroke_w,
+                    }
+                )
+            else:
+                svg_parts.append(
+                    f'  <path id="{sector_paths[idx - 1]}" class="sector" d="{to_svg_path(sector_points)}" stroke="{style[f"s{idx}"]}" stroke-width="{style["sector_w"]}"/>'
+                )
+    else:
+        for idx, sector_points in enumerate(sector_svg_points, start=1):
             svg_parts.append(
-                f'  <text class="sector-label" fill="{fill}" stroke="{sector_label_stroke}" stroke-width="{sector_label_stroke_w:g}">'
-                f'<textPath href="#{sector_id}" startOffset="50%" text-anchor="middle">SECTOR {idx}</textPath></text>'
+                f'  <path id="{sector_paths[idx - 1]}" class="sector" d="{to_svg_path(sector_points)}" stroke="{style[f"s{idx}"]}" stroke-width="{style["sector_w"]}"/>'
             )
 
     svg_parts.extend(
@@ -2300,6 +2514,14 @@ def main() -> None:
         x, y = marker_positions[turn.key]
         svg_parts.append(f'  <circle class="marker" cx="{x:.2f}" cy="{y:.2f}" r="{MARKER_R}"/>')
         svg_parts.append(f'  <text class="marker-text" x="{x:.2f}" y="{y + 0.5:.2f}">{turn.key}</text>')
+
+    for item in sector_label_items:
+        svg_parts.append(
+            f'  <text class="sector-label" fill="{item["fill"]}" stroke="{item["stroke"]}" stroke-width="{float(item["stroke_w"]):g}" '
+            f'transform="rotate({float(item["angle"]):g} {float(item["x"]):.2f} {float(item["y"]):.2f})" '
+            f'x="{float(item["x"]):.2f}" y="{float(item["y"]):.2f}" text-anchor="middle" dominant-baseline="middle">'
+            f'{item["text"]}</text>'
+        )
 
     for label in label_positions:
         svg_parts.append(f'  <text class="label" x="{label["x"]:.2f}" y="{label["y"]:.2f}">{label["name"]}</text>')

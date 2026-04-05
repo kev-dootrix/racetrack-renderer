@@ -24,28 +24,32 @@
     "centerline": "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/tracks/Monza.csv",
     "raceline": null
   },
+  "data_files": {
+    "geometry": null
+  },
   "sector_splits": [
     {
       "sector": 1,
-      "method": "equal thirds of centerline distance",
-      "distance_along_trace": 1930.067,
+      "method": "mapped from Sector1SessionTime onto position trace",
+      "distance_along_trace": 1887.504,
       "point": {
-        "x": 1559.178,
-        "y": 618.469
+        "x": 1560.249,
+        "y": 606.128
       }
     },
     {
       "sector": 2,
-      "method": "equal thirds of centerline distance",
-      "distance_along_trace": 3860.135,
+      "method": "mapped from Sector2SessionTime onto position trace",
+      "distance_along_trace": 3706.685,
       "point": {
-        "x": 803.612,
-        "y": 761.757
+        "x": 868.618,
+        "y": 687.783
       }
     }
   ],
   "config_overrides_used": {
     "track_config_id": "monza",
+    "style": "broadcast_dark",
     "rotation_degrees": -90.0,
     "corner_labels": true,
     "marker_spread_hints": false,

@@ -5,6 +5,7 @@
     "monza",
     "italian grand prix"
   ],
+  "style": "default",
   "geometry_source": "track_database",
   "centerline_url": "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/tracks/Monza.csv",
   "rotation_degrees": -90,

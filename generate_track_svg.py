@@ -21,6 +21,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
 CACHE_DIR = ROOT / ".cache" / "fastf1"
 CONFIG_DIR = ROOT / "track_configs"
+STYLE_DIR = ROOT / "track_styles"
 LEGACY_CONFIG_PATH = ROOT / "track_configs.json"
 
 CANVAS_W = 1240
@@ -45,6 +46,52 @@ COLORS = {
     "s1": "#fd0000",
     "s2": "#02a5d5",
     "s3": "#eecc03",
+}
+
+DEFAULT_STYLE_NAME = "default"
+STYLE_DEFAULTS: dict[str, Any] = {
+    "name": DEFAULT_STYLE_NAME,
+    "bg": COLORS["bg"],
+    "title_fill": "#111111",
+    "title_size": 34,
+    "title_weight": 700,
+    "title_font": "Inter, Arial, sans-serif",
+    "outer": COLORS["outer"],
+    "inner": COLORS["inner"],
+    "s1": COLORS["s1"],
+    "s2": COLORS["s2"],
+    "s3": COLORS["s3"],
+    "outer_w": OUTER_W,
+    "inner_w": INNER_W,
+    "sector_w": SECTOR_W,
+    "track_join": "round",
+    "track_cap": "round",
+    "sector_join": "round",
+    "sector_cap": "butt",
+    "marker_fill": "#2e3448",
+    "marker_stroke": "#2e3448",
+    "marker_text": "#ffffff",
+    "marker_text_size": 15,
+    "marker_text_weight": 700,
+    "label_fill": "#111111",
+    "label_stroke": "#ffffff",
+    "label_stroke_w": 5,
+    "label_size": 18,
+    "label_weight": 600,
+    "label_font": "Inter, Arial, sans-serif",
+    "sector_labels": False,
+    "sector_label_fill_mode": "sector",
+    "sector_label_stroke": "#ffffff",
+    "sector_label_stroke_w": 5,
+    "sector_label_size": 20,
+    "sector_label_weight": 800,
+    "sector_label_font": "Inter, Arial, sans-serif",
+    "sector_label_letter_spacing": 0.0,
+    "start_line_outer": "#121528",
+    "start_line_inner": "#ffffff",
+    "arrow_color": "#121528",
+    "comparison_centerline_color": "#eecc03",
+    "debug_centerline_color": "#000000",
 }
 
 
@@ -210,6 +257,33 @@ def save_config(config: dict[str, Any]) -> None:
     for path in CONFIG_DIR.glob("*.json"):
         if path not in desired_paths:
             path.unlink()
+
+
+def compact_key(value: str) -> str:
+    return compact(value)
+
+
+def load_styles() -> dict[str, dict[str, Any]]:
+    styles: dict[str, dict[str, Any]] = {compact_key(DEFAULT_STYLE_NAME): dict(STYLE_DEFAULTS)}
+    if STYLE_DIR.exists():
+        for path in sorted(STYLE_DIR.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text())
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            name = str(payload.get("name") or path.stem).strip() or path.stem
+            merged = dict(STYLE_DEFAULTS)
+            merged.update(payload)
+            merged["name"] = name
+            styles[compact_key(name)] = merged
+    return styles
+
+
+def resolve_style(style_name: str | None, styles: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    key = compact_key(style_name or DEFAULT_STYLE_NAME)
+    return styles.get(key, styles[compact_key(DEFAULT_STYLE_NAME)])
 
 
 def fetch_json(url: str) -> dict[str, Any]:
@@ -1064,6 +1138,7 @@ def autogenerate_track_config(
     turns: list[Turn],
     turn_lookup: dict[str, Turn],
     geometry_spec: GeometrySpec | None = None,
+    style_name: str = DEFAULT_STYLE_NAME,
 ) -> dict[str, Any]:
     search_queries = [
         f"{event.get('Location', '')} circuit",
@@ -1106,6 +1181,7 @@ def autogenerate_track_config(
         "geometry_source": geometry_spec.kind if geometry_spec else "fastf1",
         "raceline_url": geometry_spec.raceline_url if geometry_spec else "",
         "centerline_url": geometry_spec.centerline_url if geometry_spec else "",
+        "style": style_name,
         "rotation_degrees": 0.0,
         "marker_offset": DEFAULT_MARKER_OFFSET,
         "marker_spread_hints": {},
@@ -1300,6 +1376,7 @@ def render_geometry_only_track(
     turns: list[Turn],
     turn_lookup: dict[str, Turn],
     track_config: dict[str, Any],
+    style: dict[str, Any],
     rotation_degrees: float,
     source_label: str,
     source_urls: dict[str, str | None] | None = None,
@@ -1369,6 +1446,7 @@ def render_geometry_only_track(
         ],
         "config_overrides_used": {
             "track_config_id": track_config.get("id"),
+            "style": style.get("name", style_name),
             "rotation_degrees": rotation_degrees,
             "corner_labels": bool(track_config.get("corner_labels")),
             "marker_spread_hints": bool(track_config.get("marker_spread_hints")),
@@ -1462,32 +1540,45 @@ def render_geometry_only_track(
 
                 comparison_centerline_points = [(cmp_sx(point), cmp_sy(point)) for point in rotated_comparison]
 
+    sector_paths = ["sector-path-1", "sector-path-2", "sector-path-3"]
     svg_parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{CANVAS_W}" height="{CANVAS_H}" viewBox="0 0 {CANVAS_W} {CANVAS_H}" fill="none">',
         "  <style>",
-        "    .title { font: 700 34px Inter, Arial, sans-serif; fill: #111111; }",
-        "    .track { fill: none; stroke-linejoin: round; stroke-linecap: round; }",
-        "    .sector { fill: none; stroke-linejoin: round; stroke-linecap: butt; }",
-        "    .marker { fill: #2e3448; stroke: #2e3448; stroke-width: 1.5; }",
-        "    .marker-text { font: 700 15px Inter, Arial, sans-serif; fill: #ffffff; text-anchor: middle; dominant-baseline: middle; }",
-        "    .label { font: 600 18px Inter, Arial, sans-serif; fill: #111111; paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }",
-        "    .start-line-outline { stroke: #121528; stroke-width: 8; stroke-linecap: round; }",
-        "    .start-line-inner { stroke: #ffffff; stroke-width: 4; stroke-linecap: round; }",
-        "    .arrow-shaft { stroke: #121528; stroke-width: 4; stroke-linecap: round; }",
-        "    .arrow-head { fill: #121528; }",
+        f'    .title {{ font: {style["title_weight"]} {style["title_size"]}px {style["title_font"]}; fill: {style["title_fill"]}; }}',
+        f'    .track {{ fill: none; stroke-linejoin: {style["track_join"]}; stroke-linecap: {style["track_cap"]}; }}',
+        f'    .sector {{ fill: none; stroke-linejoin: {style["sector_join"]}; stroke-linecap: {style["sector_cap"]}; }}',
+        f'    .marker {{ fill: {style["marker_fill"]}; stroke: {style["marker_stroke"]}; stroke-width: 1.5; }}',
+        f'    .marker-text {{ font: {style["marker_text_weight"]} {style["marker_text_size"]}px {style["label_font"]}; fill: {style["marker_text"]}; text-anchor: middle; dominant-baseline: middle; }}',
+        f'    .label {{ font: {style["label_weight"]} {style["label_size"]}px {style["label_font"]}; fill: {style["label_fill"]}; paint-order: stroke; stroke: {style["label_stroke"]}; stroke-width: {style["label_stroke_w"]}px; stroke-linejoin: round; }}',
+        f'    .sector-label {{ font: {style["sector_label_weight"]} {style["sector_label_size"]}px {style["sector_label_font"]}; paint-order: stroke fill; stroke-linejoin: round; stroke-linecap: round; letter-spacing: {style["sector_label_letter_spacing"]}px; }}',
+        f'    .start-line-outline {{ stroke: {style["start_line_outer"]}; stroke-width: 8; stroke-linecap: round; }}',
+        f'    .start-line-inner {{ stroke: {style["start_line_inner"]}; stroke-width: 4; stroke-linecap: round; }}',
+        f'    .arrow-shaft {{ stroke: {style["arrow_color"]}; stroke-width: 4; stroke-linecap: round; }}',
+        f'    .arrow-head {{ fill: {style["arrow_color"]}; }}',
         "  </style>",
-        f'  <rect width="{CANVAS_W}" height="{CANVAS_H}" fill="{COLORS["bg"]}"/>',
+        f'  <rect width="{CANVAS_W}" height="{CANVAS_H}" fill="{style["bg"]}"/>',
         f'  <text class="title" x="{PADDING_X}" y="62">{title}</text>',
-        f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{COLORS["outer"]}" stroke-width="{OUTER_W}"/>',
-        f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{COLORS["inner"]}" stroke-width="{INNER_W}"/>',
-        f'  <path class="sector" d="{to_svg_path(sector_svg_points[0])}" stroke="{COLORS["s1"]}" stroke-width="{SECTOR_W}"/>',
-        f'  <path class="sector" d="{to_svg_path(sector_svg_points[1])}" stroke="{COLORS["s2"]}" stroke-width="{SECTOR_W}"/>',
-        f'  <path class="sector" d="{to_svg_path(sector_svg_points[2])}" stroke="{COLORS["s3"]}" stroke-width="{SECTOR_W}"/>',
+        f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["outer"]}" stroke-width="{style["outer_w"]}"/>',
+        f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["inner"]}" stroke-width="{style["inner_w"]}"/>',
+        f'  <path id="{sector_paths[0]}" class="sector" d="{to_svg_path(sector_svg_points[0])}" stroke="{style["s1"]}" stroke-width="{style["sector_w"]}"/>',
+        f'  <path id="{sector_paths[1]}" class="sector" d="{to_svg_path(sector_svg_points[1])}" stroke="{style["s2"]}" stroke-width="{style["sector_w"]}"/>',
+        f'  <path id="{sector_paths[2]}" class="sector" d="{to_svg_path(sector_svg_points[2])}" stroke="{style["s3"]}" stroke-width="{style["sector_w"]}"/>',
     ]
+
+    if bool(style.get("sector_labels")):
+        sector_label_fill_mode = str(style.get("sector_label_fill_mode", "sector")).lower()
+        sector_label_stroke = str(style.get("sector_label_stroke", style["bg"]))
+        sector_label_stroke_w = float(style.get("sector_label_stroke_w", 5))
+        for idx, sector_id in enumerate(sector_paths, start=1):
+            fill = style[f"s{idx}"] if sector_label_fill_mode != "fixed" else str(style.get("sector_label_fill", style[f"s{idx}"]))
+            svg_parts.append(
+                f'  <text class="sector-label" fill="{fill}" stroke="{sector_label_stroke}" stroke-width="{sector_label_stroke_w:g}">'
+                f'<textPath href="#{sector_id}" startOffset="50%" text-anchor="middle">SECTOR {idx}</textPath></text>'
+            )
 
     if comparison_centerline_points:
         svg_parts.append(
-            f'  <polyline points="{" ".join(f"{x:.2f},{y:.2f}" for x, y in comparison_centerline_points)}" fill="none" stroke="#121212" stroke-width="2"/>'
+            f'  <polyline points="{" ".join(f"{x:.2f},{y:.2f}" for x, y in comparison_centerline_points)}" fill="none" stroke="{style["comparison_centerline_color"]}" stroke-width="2"/>'
         )
 
     for turn in turns:
@@ -1667,6 +1758,7 @@ def main() -> None:
     parser.add_argument("track", help="Track or event name, e.g. Imola, Suzuka, Monza")
     parser.add_argument("--year", type=int, help="Season year to use")
     parser.add_argument("--session", default="Q", help="Session code to use, defaults to Q")
+    parser.add_argument("--style", help="Style preset to use, overriding the track config")
     parser.add_argument("--output-root", default=str(ROOT), help="Root directory for generated track folders")
     args = parser.parse_args()
 
@@ -1675,6 +1767,7 @@ def main() -> None:
     fastf1.Cache.enable_cache(str(CACHE_DIR))
 
     config = load_config()
+    styles = load_styles()
     if not CONFIG_DIR.exists() or not any(CONFIG_DIR.glob("*.json")):
         save_config(config)
     event_lookup_failed = False
@@ -1697,6 +1790,8 @@ def main() -> None:
         }
         event_fields = [str(args.track)]
     track_config = find_track_config(args.track, event_fields, config) or {}
+    style_name = str(args.style or track_config.get("style") or DEFAULT_STYLE_NAME).strip() or DEFAULT_STYLE_NAME
+    style = resolve_style(style_name, styles)
     title = track_config.get("title") or str(event.get("Location") or args.track).strip()
     folder_name = sanitize_dirname(title)
     output_root = Path(args.output_root).resolve()
@@ -1773,6 +1868,7 @@ def main() -> None:
                 turns=turns,
                 turn_lookup=turn_lookup,
                 track_config=track_config,
+                style=style,
                 rotation_degrees=rotation_degrees,
                 source_label=geometry_spec.source_label or geometry_spec.source_note or geometry_spec.kind,
                 source_urls={
@@ -1863,7 +1959,7 @@ def main() -> None:
         turn_lookup = {turn.key: turn for turn in turns}
 
         if not track_config:
-            track_config = autogenerate_track_config(args.track, event, turns, turn_lookup, geometry_spec)
+            track_config = autogenerate_track_config(args.track, event, turns, turn_lookup, geometry_spec, style_name)
             config.setdefault("tracks", []).append(track_config)
             save_config(config)
 
@@ -1942,6 +2038,7 @@ def main() -> None:
             ],
             "config_overrides_used": {
                 "track_config_id": track_config.get("id"),
+                "style": style.get("name", style_name),
                 "rotation_degrees": rotation_degrees,
                 "corner_labels": bool(track_config.get("corner_labels")),
                 "marker_spread_hints": bool(track_config.get("marker_spread_hints")),
@@ -1992,7 +2089,7 @@ def main() -> None:
         turn_lookup = {turn.key: turn for turn in turns}
 
         if not track_config:
-            track_config = autogenerate_track_config(args.track, event, turns, turn_lookup, None)
+            track_config = autogenerate_track_config(args.track, event, turns, turn_lookup, None, style_name)
             config.setdefault("tracks", []).append(track_config)
             save_config(config)
 
@@ -2057,6 +2154,7 @@ def main() -> None:
             ],
             "config_overrides_used": {
                 "track_config_id": track_config.get("id"),
+                "style": style.get("name", style_name),
                 "rotation_degrees": rotation_degrees,
                 "corner_labels": bool(track_config.get("corner_labels")),
                 "marker_spread_hints": bool(track_config.get("marker_spread_hints")),
@@ -2153,32 +2251,50 @@ def main() -> None:
 
                 comparison_centerline_points = [(cmp_sx(point), cmp_sy(point)) for point in rotated_comparison]
 
+    sector_paths = ["sector-path-1", "sector-path-2", "sector-path-3"]
     svg_parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{CANVAS_W}" height="{CANVAS_H}" viewBox="0 0 {CANVAS_W} {CANVAS_H}" fill="none">',
         "  <style>",
-        "    .title { font: 700 34px Inter, Arial, sans-serif; fill: #111111; }",
-        "    .track { fill: none; stroke-linejoin: round; stroke-linecap: round; }",
-        "    .sector { fill: none; stroke-linejoin: round; stroke-linecap: butt; }",
-        "    .marker { fill: #2e3448; stroke: #2e3448; stroke-width: 1.5; }",
-        "    .marker-text { font: 700 15px Inter, Arial, sans-serif; fill: #ffffff; text-anchor: middle; dominant-baseline: middle; }",
-        "    .label { font: 600 18px Inter, Arial, sans-serif; fill: #111111; paint-order: stroke; stroke: #ffffff; stroke-width: 5px; stroke-linejoin: round; }",
-        "    .start-line-outline { stroke: #121528; stroke-width: 8; stroke-linecap: round; }",
-        "    .start-line-inner { stroke: #ffffff; stroke-width: 4; stroke-linecap: round; }",
-        "    .arrow-shaft { stroke: #121528; stroke-width: 4; stroke-linecap: round; }",
-        "    .arrow-head { fill: #121528; }",
+        f'    .title {{ font: {style["title_weight"]} {style["title_size"]}px {style["title_font"]}; fill: {style["title_fill"]}; }}',
+        f'    .track {{ fill: none; stroke-linejoin: {style["track_join"]}; stroke-linecap: {style["track_cap"]}; }}',
+        f'    .sector {{ fill: none; stroke-linejoin: {style["sector_join"]}; stroke-linecap: {style["sector_cap"]}; }}',
+        f'    .marker {{ fill: {style["marker_fill"]}; stroke: {style["marker_stroke"]}; stroke-width: 1.5; }}',
+        f'    .marker-text {{ font: {style["marker_text_weight"]} {style["marker_text_size"]}px {style["label_font"]}; fill: {style["marker_text"]}; text-anchor: middle; dominant-baseline: middle; }}',
+        f'    .label {{ font: {style["label_weight"]} {style["label_size"]}px {style["label_font"]}; fill: {style["label_fill"]}; paint-order: stroke; stroke: {style["label_stroke"]}; stroke-width: {style["label_stroke_w"]}px; stroke-linejoin: round; }}',
+        f'    .sector-label {{ font: {style["sector_label_weight"]} {style["sector_label_size"]}px {style["sector_label_font"]}; paint-order: stroke fill; stroke-linejoin: round; stroke-linecap: round; letter-spacing: {style["sector_label_letter_spacing"]}px; }}',
+        f'    .start-line-outline {{ stroke: {style["start_line_outer"]}; stroke-width: 8; stroke-linecap: round; }}',
+        f'    .start-line-inner {{ stroke: {style["start_line_inner"]}; stroke-width: 4; stroke-linecap: round; }}',
+        f'    .arrow-shaft {{ stroke: {style["arrow_color"]}; stroke-width: 4; stroke-linecap: round; }}',
+        f'    .arrow-head {{ fill: {style["arrow_color"]}; }}',
         "  </style>",
-        f'  <rect width="{CANVAS_W}" height="{CANVAS_H}" fill="{COLORS["bg"]}"/>',
+        f'  <rect width="{CANVAS_W}" height="{CANVAS_H}" fill="{style["bg"]}"/>',
         f'  <text class="title" x="{PADDING_X}" y="62">{title}</text>',
-        f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{COLORS["outer"]}" stroke-width="{OUTER_W}"/>',
-        f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{COLORS["inner"]}" stroke-width="{INNER_W}"/>',
-        f'  <path class="sector" d="{to_svg_path(sector_svg_points[0])}" stroke="{COLORS["s1"]}" stroke-width="{SECTOR_W}"/>',
-        f'  <path class="sector" d="{to_svg_path(sector_svg_points[1])}" stroke="{COLORS["s2"]}" stroke-width="{SECTOR_W}"/>',
-        f'  <path class="sector" d="{to_svg_path(sector_svg_points[2])}" stroke="{COLORS["s3"]}" stroke-width="{SECTOR_W}"/>',
-        f'  <line class="start-line-outline" x1="{start_line["x1"]:.2f}" y1="{start_line["y1"]:.2f}" x2="{start_line["x2"]:.2f}" y2="{start_line["y2"]:.2f}"/>',
-        f'  <line class="start-line-inner" x1="{start_line["x1"]:.2f}" y1="{start_line["y1"]:.2f}" x2="{start_line["x2"]:.2f}" y2="{start_line["y2"]:.2f}"/>',
-        f'  <line class="arrow-shaft" x1="{arrow_base_x:.2f}" y1="{arrow_base_y:.2f}" x2="{arrow_shaft_end_x:.2f}" y2="{arrow_shaft_end_y:.2f}"/>',
-        f'  <polygon class="arrow-head" points="{arrow_tip_x:.2f},{arrow_tip_y:.2f} {arrow_left_x:.2f},{arrow_left_y:.2f} {arrow_right_x:.2f},{arrow_right_y:.2f}"/>',
+        f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["outer"]}" stroke-width="{style["outer_w"]}"/>',
+        f'  <path class="track" d="{to_svg_path(full_svg_points)}" stroke="{style["inner"]}" stroke-width="{style["inner_w"]}"/>',
+        f'  <path id="{sector_paths[0]}" class="sector" d="{to_svg_path(sector_svg_points[0])}" stroke="{style["s1"]}" stroke-width="{style["sector_w"]}"/>',
+        f'  <path id="{sector_paths[1]}" class="sector" d="{to_svg_path(sector_svg_points[1])}" stroke="{style["s2"]}" stroke-width="{style["sector_w"]}"/>',
+        f'  <path id="{sector_paths[2]}" class="sector" d="{to_svg_path(sector_svg_points[2])}" stroke="{style["s3"]}" stroke-width="{style["sector_w"]}"/>',
     ]
+
+    if bool(style.get("sector_labels")):
+        sector_label_fill_mode = str(style.get("sector_label_fill_mode", "sector")).lower()
+        sector_label_stroke = str(style.get("sector_label_stroke", style["bg"]))
+        sector_label_stroke_w = float(style.get("sector_label_stroke_w", 5))
+        for idx, sector_id in enumerate(sector_paths, start=1):
+            fill = style[f"s{idx}"] if sector_label_fill_mode != "fixed" else str(style.get("sector_label_fill", style[f"s{idx}"]))
+            svg_parts.append(
+                f'  <text class="sector-label" fill="{fill}" stroke="{sector_label_stroke}" stroke-width="{sector_label_stroke_w:g}">'
+                f'<textPath href="#{sector_id}" startOffset="50%" text-anchor="middle">SECTOR {idx}</textPath></text>'
+            )
+
+    svg_parts.extend(
+        [
+            f'  <line class="start-line-outline" x1="{start_line["x1"]:.2f}" y1="{start_line["y1"]:.2f}" x2="{start_line["x2"]:.2f}" y2="{start_line["y2"]:.2f}"/>',
+            f'  <line class="start-line-inner" x1="{start_line["x1"]:.2f}" y1="{start_line["y1"]:.2f}" x2="{start_line["x2"]:.2f}" y2="{start_line["y2"]:.2f}"/>',
+            f'  <line class="arrow-shaft" x1="{arrow_base_x:.2f}" y1="{arrow_base_y:.2f}" x2="{arrow_shaft_end_x:.2f}" y2="{arrow_shaft_end_y:.2f}"/>',
+            f'  <polygon class="arrow-head" points="{arrow_tip_x:.2f},{arrow_tip_y:.2f} {arrow_left_x:.2f},{arrow_left_y:.2f} {arrow_right_x:.2f},{arrow_right_y:.2f}"/>',
+        ]
+    )
 
     for turn in turns:
         x, y = marker_positions[turn.key]
@@ -2190,11 +2306,11 @@ def main() -> None:
 
     if debug_centerline:
         svg_parts.append(
-            f'  <path d="{to_svg_path(full_svg_points)}" fill="none" stroke="#000000" stroke-width="{debug_centerline_width:g}" stroke-linecap="round" stroke-linejoin="round"/>'
+            f'  <path d="{to_svg_path(full_svg_points)}" fill="none" stroke="{style["debug_centerline_color"]}" stroke-width="{debug_centerline_width:g}" stroke-linecap="round" stroke-linejoin="round"/>'
         )
     if comparison_centerline_points:
         svg_parts.append(
-            f'  <path d="{to_svg_path(comparison_centerline_points)}" fill="none" stroke="#eecc03" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+            f'  <path d="{to_svg_path(comparison_centerline_points)}" fill="none" stroke="{style["comparison_centerline_color"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
     svg_parts.append("</svg>")

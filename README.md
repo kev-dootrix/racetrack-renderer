@@ -86,6 +86,7 @@ All track-specific behavior lives in [`track_configs/`](./track_configs), with o
 
 Useful fields include:
 
+- `style`: selects the visual preset to render with
 - `geometry_source`: chooses the source family
 - `centerline_url` / `raceline_url`: explicit URLs when a track is not auto-discovered
 - `rotation_degrees`: rotates the whole layout for better presentation
@@ -99,6 +100,23 @@ Useful fields include:
 If a track does not already have a config entry and the track maps to an F1 event, the script can create a draft entry.
 That draft may use Wikipedia text to seed corner names.
 The generated config is meant to be edited by hand and then treated as the source of truth on reruns.
+
+## Track styles
+
+Track appearance lives in [`track_styles/`](./track_styles), with one JSON file per style preset.
+
+The current presets are:
+
+- `default`: the original white-background presentation style
+- `broadcast_dark`: the dark broadcast-style render with a black background, colored sector centerline, and curved sector labels
+
+Style resolution works in this order:
+
+1. A `--style` CLI flag, if you pass one.
+2. The track config's `style` field.
+3. The `default` style preset.
+
+That means you can keep one track config and render it in a different visual treatment just by overriding the style on the command line.
 
 ## What gets stored in each track folder
 

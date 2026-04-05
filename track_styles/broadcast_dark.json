@@ -1,0 +1,17 @@
+{
+  "name": "broadcast_dark",
+  "bg": "#000000",
+  "title_fill": "#ffffff",
+  "label_fill": "#ffffff",
+  "label_stroke": "#000000",
+  "label_stroke_w": 4,
+  "sector_labels": true,
+  "sector_cap": "round",
+  "sector_label_stroke": "#000000",
+  "sector_label_stroke_w": 4,
+  "sector_label_size": 22,
+  "sector_label_weight": 800,
+  "sector_label_letter_spacing": 0.5,
+  "arrow_color": "#ffffff",
+  "start_line_inner": "#ffffff"
+}

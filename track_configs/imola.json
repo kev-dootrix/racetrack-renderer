@@ -6,6 +6,7 @@
     "emilia romagna",
     "autodromo enzo e dino ferrari"
   ],
+  "style": "default",
   "marker_offset": 37.5,
   "marker_spread_hints": {
     "01": [

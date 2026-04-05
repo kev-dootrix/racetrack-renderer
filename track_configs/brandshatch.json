@@ -6,6 +6,7 @@
     "brandshatch",
     "brands"
   ],
+  "style": "default",
   "geometry_source": "f1tenth_racetrack",
   "raceline_url": "https://raw.githubusercontent.com/f1tenth/f1tenth_racetracks/main/BrandsHatch/BrandsHatch_raceline.csv",
   "centerline_url": "https://raw.githubusercontent.com/f1tenth/f1tenth_racetracks/main/BrandsHatch/BrandsHatch_centerline.csv",

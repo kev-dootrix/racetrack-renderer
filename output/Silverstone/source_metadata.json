@@ -1,0 +1,58 @@
+{
+  "title": "Silverstone",
+  "event": {
+    "year": 2024,
+    "event_name": "British Grand Prix",
+    "official_event_name": "FORMULA 1 QATAR AIRWAYS BRITISH GRAND PRIX 2024",
+    "location": "Silverstone",
+    "country": "United Kingdom",
+    "session_type": "Q"
+  },
+  "fastest_lap": {
+    "driver": "RUS",
+    "lap_time": "0 days 00:01:25.819000",
+    "sector_1_time": "0 days 00:00:28.016000",
+    "sector_2_time": "0 days 00:00:34.508000",
+    "sector_3_time": "0 days 00:00:23.295000"
+  },
+  "sources": [
+    "TUMFTM track centerline",
+    "FastF1 circuit_info corner coordinates and angles for marker placement",
+    "Equal-thirds sector splits derived from the centerline geometry"
+  ],
+  "data_urls": {
+    "centerline": "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/tracks/Silverstone.csv",
+    "raceline": null
+  },
+  "data_files": {
+    "geometry": null
+  },
+  "sector_splits": [
+    {
+      "sector": 1,
+      "method": "mapped from Sector1SessionTime onto position trace",
+      "distance_along_trace": 1801.582,
+      "point": {
+        "x": 1045.9,
+        "y": 420.491
+      }
+    },
+    {
+      "sector": 2,
+      "method": "mapped from Sector2SessionTime onto position trace",
+      "distance_along_trace": 4248.274,
+      "point": {
+        "x": 233.263,
+        "y": -16.233
+      }
+    }
+  ],
+  "config_overrides_used": {
+    "track_config_id": "silverstone",
+    "style": "electrix",
+    "rotation_degrees": -90.0,
+    "corner_labels": true,
+    "marker_spread_hints": false,
+    "geometry_source": "track_database"
+  }
+}

@@ -109,6 +109,7 @@ The current presets are:
 
 - `default`: the original white-background presentation style
 - `broadcast_dark`: the dark broadcast-style render with a black background, colored sector centerline, and curved sector labels
+- `electrix`: a Dootrix-inspired dark neon style with Space Grotesk title and sector labels, Noto Sans corner names, an Electric Yellow sector 1 line, Indigo sector 2, Mint sector 3, and color-matched sector labels
 
 Style resolution works in this order:
 
@@ -129,6 +130,10 @@ Default style example:
 Broadcast dark style example:
 
 ![Monza broadcast dark style](./README_assets/monza-example.png)
+
+Electrix style example:
+
+![Silverstone Electrix style](./README_assets/silverstone-example.png)
 
 ## What gets stored in each track folder
 

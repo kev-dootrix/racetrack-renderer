@@ -8,7 +8,7 @@
   "style": "default",
   "geometry_source": "track_database",
   "centerline_url": "https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/tracks/Monza.csv",
-  "rotation_degrees": -90,
+  "rotation_degrees": 90,
   "marker_offset": 37.5,
   "marker_spread_hints": {},
   "corner_labels": [

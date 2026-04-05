@@ -17,7 +17,7 @@ At a high level, the script:
 3. Loads or builds the centerline.
 4. Places turn markers and corner labels.
 5. Adds the start/finish line and direction arrow.
-6. Writes the final SVG into a per-track folder.
+6. Writes the final SVG into a per-track folder under `output/`.
 
 ## Geometry source order
 
@@ -132,13 +132,13 @@ Broadcast dark style example:
 
 ## What gets stored in each track folder
 
-Each generated track gets its own folder under the output root, named after the circuit title.
+Each generated track gets its own folder under `output/`, named after the circuit title.
 
 Example folders:
 
-- `Imola/`
-- `Monza/`
-- `Brands Hatch/`
+- `output/Imola/`
+- `output/Monza/`
+- `output/Brands Hatch/`
 
 ### Always written
 
@@ -195,13 +195,13 @@ Sector boundaries are chosen differently depending on mode:
 Generate an F1 track:
 
 ```bash
-python3 generate_track_svg.py Imola --year 2024 --output-root .
+python3 generate_track_svg.py Imola --year 2024
 ```
 
 Generate a non-F1 geometry-only track:
 
 ```bash
-python3 generate_track_svg.py "Brands Hatch" --year 2024 --output-root .
+python3 generate_track_svg.py "Brands Hatch" --year 2024
 ```
 
 ## Local post-process editor

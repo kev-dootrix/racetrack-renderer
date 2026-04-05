@@ -2086,7 +2086,7 @@ def main() -> None:
     parser.add_argument("--year", type=int, help="Season year to use")
     parser.add_argument("--session", default="Q", help="Session code to use, defaults to Q")
     parser.add_argument("--style", help="Style preset to use, overriding the track config")
-    parser.add_argument("--output-root", default=str(ROOT), help="Root directory for generated track folders")
+    parser.add_argument("--output-root", default=str(ROOT / "output"), help="Root directory for generated track folders")
     args = parser.parse_args()
 
     fastf1 = ensure_fastf1()

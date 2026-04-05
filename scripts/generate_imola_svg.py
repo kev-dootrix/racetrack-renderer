@@ -9,8 +9,9 @@ from pathlib import Path
 import fastf1
 
 
-ROOT = Path(__file__).resolve().parent
-CACHE_DIR = ROOT.parent / ".cache" / "ff1cache"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+ROOT = REPO_ROOT / "output" / "Imola"
+CACHE_DIR = REPO_ROOT / ".cache" / "ff1cache"
 SESSION_YEAR = 2024
 SESSION_NAME = "Emilia Romagna Grand Prix"
 SESSION_TYPE = "Q"

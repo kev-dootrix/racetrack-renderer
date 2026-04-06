@@ -9,9 +9,9 @@ It supports multiple geometry sources, per-track layout overrides, and two modes
 The current generator is [`generate_track_svg.py`](./generate_track_svg.py).
 There is also a standalone 3D viewer generator, [`generate_track_3d.py`](./generate_track_3d.py), which writes a single-page HTML track ribbon with elevation.
 
-## What the script does
+## SVG generator and editor
 
-At a high level, the script:
+At a high level, the SVG script:
 
 1. Resolves the track name to a track config entry in [`track_configs/`](./track_configs).
 2. Chooses the best available geometry source for that track.
@@ -210,18 +210,7 @@ Generate a non-F1 geometry-only track:
 python3 generate_track_svg.py "Brands Hatch" --year 2024
 ```
 
-Generate a 3D elevation ribbon:
-
-```bash
-python3 generate_track_3d.py Imola --year 2024
-```
-
-The 3D script writes a single HTML file into `output/<Track>/`, for example `output/Imola/imola-3d.html`.
-When FastF1 data is available, it uses FastF1 telemetry for elevation. When no FastF1 event exists, it prefers trusted track geometry from the config or track databases, scales it to the configured real-world track length if one is available, and then falls back to a free DEM source via OpenTopoData for elevation.
-
-For geometry-only tracks such as Brands Hatch, the first run also saves local geometry and elevation caches in the track folder, for example `output/Brands Hatch/brands-hatch_geometry_v3.json` and `output/Brands Hatch/brands-hatch_elevation_profile.json`, so reruns can regenerate the same 3D output without re-querying remote services.
-
-## Local post-process editor
+### Local post-process SVG editor
 
 ![Editor](./README_assets/editor-example.png)
 
@@ -266,6 +255,28 @@ The editor updates the matching track config with:
 - `label_settings`: optional global `font_family` / `font_size` override for all corner labels on that track
 
 The generator now honors those fields on rerender, while unchanged tracks continue to use the legacy auto-placement logic.
+
+## 3D viewer generator
+
+The 3D generator is [`generate_track_3d.py`](./generate_track_3d.py).
+It writes a single-page HTML track ribbon with elevation into a per-track folder under `output/`.
+
+### Example output
+
+![Imola 3D example](./README_assets/3d-example.png)
+
+The 3D script writes a single HTML file into `output/<Track>/`, for example `output/Imola/imola-3d.html`.
+When FastF1 data is available, it uses FastF1 telemetry for elevation. When no FastF1 event exists, it prefers trusted track geometry from the config or track databases, scales it to the configured real-world track length if one is available, and then falls back to a free DEM source via OpenTopoData for elevation.
+
+For geometry-only tracks such as Brands Hatch, the first run also saves local geometry and elevation caches in the track folder, for example `output/Brands Hatch/brands-hatch_geometry_v3.json` and `output/Brands Hatch/brands-hatch_elevation_profile.json`, so reruns can regenerate the same 3D output without re-querying remote services.
+
+### Example commands
+
+Generate a 3D elevation ribbon:
+
+```bash
+python3 generate_track_3d.py Imola --year 2024
+```
 
 ## License
 

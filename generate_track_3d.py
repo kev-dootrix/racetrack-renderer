@@ -80,12 +80,15 @@ class RenderTheme:
     text: str = "#f4f7fb"
     muted_text: str = "rgba(244, 247, 251, 0.72)"
     track_fill: str = "#d7e0ee"
+    track_side: str = "#5c6676"
+    track_base: str = "#090d15"
     track_edge: str = "#0d1320"
     track_accent: str = "#77d1ff"
     sun_color: str = "#ffe7b7"
     fog: str = "#08111f"
-    elevation_scale: float = 3.0
+    elevation_scale: float = 1.0
     track_width_m: float = 18.0
+    track_depth: float = 18.0
     show_centerline: bool = True
 
 
@@ -701,12 +704,15 @@ def build_html_document(
             "text": theme.text,
             "mutedText": theme.muted_text,
             "trackFill": theme.track_fill,
+            "trackSide": theme.track_side,
+            "trackBase": theme.track_base,
             "trackEdge": theme.track_edge,
             "trackAccent": theme.track_accent,
             "sunColor": theme.sun_color,
             "fog": theme.fog,
             "elevationScale": theme.elevation_scale,
             "trackWidthM": theme.track_width_m,
+            "trackDepth": theme.track_depth,
             "showCenterline": theme.show_centerline,
         },
     }
@@ -931,10 +937,10 @@ def build_html_document(
     backLight.position.set(-1800, 1200, -2400);
     scene.add(backLight);
 
-    function buildRibbonGeometry(points, widthMeters) {{
+    function buildSurfaceGeometry(points, widthMeters, yOverride = null) {{
       const count = points.length;
       if (count < 3) {{
-        throw new Error("Not enough centerline points to build a ribbon.");
+        throw new Error("Not enough centerline points to build a track surface.");
       }}
       const halfWidth = widthMeters / 2;
       const positions = new Float32Array(count * 2 * 3);
@@ -944,6 +950,7 @@ def build_html_document(
         const prev = points[(i - 1 + count) % count];
         const curr = points[i];
         const next = points[(i + 1) % count];
+        const y = yOverride === null ? curr.y : yOverride;
 
         const tangentX = next.x - prev.x;
         const tangentZ = next.z - prev.z;
@@ -957,8 +964,8 @@ def build_html_document(
         const rightX = curr.x - normalX * halfWidth;
         const rightZ = curr.z - normalZ * halfWidth;
 
-        positions.set([leftX, curr.y, leftZ], i * 6);
-        positions.set([rightX, curr.y, rightZ], i * 6 + 3);
+        positions.set([leftX, y, leftZ], i * 6);
+        positions.set([rightX, y, rightZ], i * 6 + 3);
       }}
 
       for (let i = 0; i < count; i++) {{
@@ -978,40 +985,104 @@ def build_html_document(
       return geometry;
     }}
 
-    function buildCenterline(points) {{
+    function buildSideWallGeometry(points, widthMeters, baseY, side) {{
+      const count = points.length;
+      const halfWidth = widthMeters / 2;
+      const positions = new Float32Array(count * 4 * 3);
+      const indices = [];
+
+      for (let i = 0; i < count; i++) {{
+        const next = (i + 1) % count;
+        const curr = points[i];
+        const nextPoint = points[next];
+        const prev = points[(i - 1 + count) % count];
+        const nextNext = points[(i + 2) % count];
+
+        const currTangentX = nextPoint.x - prev.x;
+        const currTangentZ = nextPoint.z - prev.z;
+        const currTangentLength = Math.hypot(currTangentX, currTangentZ) || 1;
+        const currNormalX = -currTangentZ / currTangentLength;
+        const currNormalZ = currTangentX / currTangentLength;
+
+        const nextTangentX = nextNext.x - curr.x;
+        const nextTangentZ = nextNext.z - curr.z;
+        const nextTangentLength = Math.hypot(nextTangentX, nextTangentZ) || 1;
+        const nextNormalX = -nextTangentZ / nextTangentLength;
+        const nextNormalZ = nextTangentX / nextTangentLength;
+
+        const currTopX = side === "left" ? curr.x + currNormalX * halfWidth : curr.x - currNormalX * halfWidth;
+        const currTopZ = side === "left" ? curr.z + currNormalZ * halfWidth : curr.z - currNormalZ * halfWidth;
+        const nextTopX = side === "left" ? nextPoint.x + nextNormalX * halfWidth : nextPoint.x - nextNormalX * halfWidth;
+        const nextTopZ = side === "left" ? nextPoint.z + nextNormalZ * halfWidth : nextPoint.z - nextNormalZ * halfWidth;
+
+        const baseIndex = i * 12;
+        positions.set([
+          currTopX, curr.y, currTopZ,
+          nextTopX, nextPoint.y, nextTopZ,
+          nextTopX, baseY, nextTopZ,
+          currTopX, baseY, currTopZ,
+        ], baseIndex);
+        indices.push(i * 4, i * 4 + 1, i * 4 + 2);
+        indices.push(i * 4, i * 4 + 2, i * 4 + 3);
+      }}
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setIndex(indices);
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.computeVertexNormals();
+      return geometry;
+    }}
+
+    function buildCenterline(points, offsetY = 0.15) {{
       const geometry = new THREE.BufferGeometry();
       const positions = [];
       for (const point of points) {{
-        positions.push(point.x, point.y + 0.15, point.z);
+        positions.push(point.x, point.y + offsetY, point.z);
       }}
-      positions.push(points[0].x, points[0].y + 0.15, points[0].z);
+      positions.push(points[0].x, points[0].y + offsetY, points[0].z);
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       return geometry;
     }}
 
-    const edgeGeometry = buildRibbonGeometry(centerline, theme.trackWidthM + 8);
-    const edgeMaterial = new THREE.MeshStandardMaterial({{
-      color: theme.trackEdge,
-      roughness: 0.96,
-      metalness: 0.01,
-      emissive: new THREE.Color(theme.trackEdge),
-      emissiveIntensity: 0.05,
-      side: THREE.DoubleSide,
-    }});
-    const edgeRibbon = new THREE.Mesh(edgeGeometry, edgeMaterial);
-    scene.add(edgeRibbon);
+    const minTopY = Math.min(...centerline.map((point) => point.y));
+    const baseY = minTopY - theme.trackDepth;
 
-    const ribbonGeometry = buildRibbonGeometry(centerline, theme.trackWidthM);
-    const ribbonMaterial = new THREE.MeshStandardMaterial({{
+    const trackGroup = new THREE.Group();
+
+    const topGeometry = buildSurfaceGeometry(centerline, theme.trackWidthM, null);
+    const topMaterial = new THREE.MeshStandardMaterial({{
       color: theme.trackFill,
-      roughness: 0.72,
+      roughness: 0.62,
       metalness: 0.08,
       emissive: new THREE.Color(theme.trackAccent),
-      emissiveIntensity: 0.16,
+      emissiveIntensity: 0.12,
       side: THREE.DoubleSide,
     }});
-    const ribbon = new THREE.Mesh(ribbonGeometry, ribbonMaterial);
-    scene.add(ribbon);
+    const topMesh = new THREE.Mesh(topGeometry, topMaterial);
+    trackGroup.add(topMesh);
+
+    const bottomGeometry = buildSurfaceGeometry(centerline, theme.trackWidthM, baseY);
+    const bottomMaterial = new THREE.MeshStandardMaterial({{
+      color: theme.trackBase,
+      roughness: 0.98,
+      metalness: 0.0,
+      emissive: new THREE.Color(theme.trackBase),
+      emissiveIntensity: 0.02,
+      side: THREE.DoubleSide,
+    }});
+    const bottomMesh = new THREE.Mesh(bottomGeometry, bottomMaterial);
+    trackGroup.add(bottomMesh);
+
+    const leftWallGeometry = buildSideWallGeometry(centerline, theme.trackWidthM, baseY, "left");
+    const rightWallGeometry = buildSideWallGeometry(centerline, theme.trackWidthM, baseY, "right");
+    const wallMaterial = new THREE.MeshStandardMaterial({{
+      color: theme.trackSide,
+      roughness: 0.88,
+      metalness: 0.01,
+      side: THREE.DoubleSide,
+    }});
+    trackGroup.add(new THREE.Mesh(leftWallGeometry, wallMaterial));
+    trackGroup.add(new THREE.Mesh(rightWallGeometry, wallMaterial));
 
     let centerlineLine = null;
     if (theme.showCenterline) {{
@@ -1022,13 +1093,13 @@ def build_html_document(
         opacity: 1.0,
       }});
       centerlineLine = new THREE.Line(lineGeometry, lineMaterial);
-      scene.add(centerlineLine);
+      trackGroup.add(centerlineLine);
     }}
 
     const bounds = {{
       minX: Math.min(...centerline.map((point) => point.x)),
       maxX: Math.max(...centerline.map((point) => point.x)),
-      minY: Math.min(...centerline.map((point) => point.y)),
+      minY: Math.min(...centerline.map((point) => point.y), baseY),
       maxY: Math.max(...centerline.map((point) => point.y)),
       minZ: Math.min(...centerline.map((point) => point.z)),
       maxZ: Math.max(...centerline.map((point) => point.z)),
@@ -1036,17 +1107,14 @@ def build_html_document(
     const centerX = (bounds.minX + bounds.maxX) / 2;
     const centerY = (bounds.minY + bounds.maxY) / 2;
     const centerZ = (bounds.minZ + bounds.maxZ) / 2;
-    edgeRibbon.position.set(-centerX, -centerY - 0.45, -centerZ);
-    ribbon.position.set(-centerX, -centerY, -centerZ);
-    if (centerlineLine) {{
-      centerlineLine.position.set(-centerX, -centerY, -centerZ);
-    }}
+    trackGroup.position.set(-centerX, -centerY, -centerZ);
+    scene.add(trackGroup);
 
     const spanX = bounds.maxX - bounds.minX;
     const spanY = bounds.maxY - bounds.minY;
     const spanZ = bounds.maxZ - bounds.minZ;
-    const radius = Math.max(spanX, spanY * 1.4, spanZ);
-    camera.position.set(radius * 1.15, radius * 0.82 + spanY * 0.25, radius * 1.22);
+    const radius = Math.max(spanX + theme.trackWidthM, spanY * 1.4, spanZ + theme.trackWidthM);
+    camera.position.set(radius * 1.15, radius * 0.58 + spanY * 0.18, radius * 1.18);
     controls.target.set(0, 0, 0);
     controls.update();
 
@@ -1080,27 +1148,70 @@ def load_geometry_from_html(html_path: Path) -> GeometryResult | None:
         start = text.index(marker) + len(marker)
         end = text.index(";</script>", start)
         payload = json.loads(text[start:end])
-        geometry = payload["geometry"]
-        projection_origin = geometry["projection_origin"]
-        points = geometry["points"]
-        return GeometryResult(
-            title=str(payload.get("title") or html_path.stem.replace("-3d", "")).strip(),
-            source_label=str(geometry.get("source_label") or "OpenStreetMap raceway geometry"),
-            source_note=str(geometry.get("source_note") or "Cached geometry from previous generated HTML"),
-            source_urls={},
-            geographic_points=[
-                LatLonPoint(lat=float(point["lat"]), lon=float(point["lon"])) for point in points
-            ],
-            local_points=[
-                LocalPoint(x=float(point["x"]), z=float(point["z"])) for point in points
-            ],
-            distances_m=[float(point["distance_m"]) for point in points],
-            projection_origin=LatLonPoint(lat=float(projection_origin["lat"]), lon=float(projection_origin["lon"])),
-            total_length_m=float(geometry["total_length_m"]),
-            metadata=dict(geometry.get("metadata") or {}),
-        )
+        return geometry_payload_to_result(payload["geometry"], default_title=html_path.stem.replace("-3d", ""))
     except Exception:
         return None
+
+
+def geometry_result_to_payload(geometry: GeometryResult) -> dict[str, Any]:
+    return {
+        "title": geometry.title,
+        "source_label": geometry.source_label,
+        "source_note": geometry.source_note,
+        "source_urls": geometry.source_urls,
+        "projection_origin": {
+            "lat": geometry.projection_origin.lat,
+            "lon": geometry.projection_origin.lon,
+        },
+        "points": [
+            {
+                "lat": point.lat,
+                "lon": point.lon,
+                "x": local.x,
+                "z": local.z,
+                "distance_m": distance,
+            }
+            for point, local, distance in zip(geometry.geographic_points, geometry.local_points, geometry.distances_m)
+        ],
+        "total_length_m": geometry.total_length_m,
+        "metadata": geometry.metadata,
+    }
+
+
+def geometry_payload_to_result(payload: dict[str, Any], default_title: str = "Track") -> GeometryResult:
+    projection_origin = payload["projection_origin"]
+    points = payload["points"]
+    source_urls = payload.get("source_urls") or {}
+    return GeometryResult(
+        title=str(payload.get("title") or default_title).strip(),
+        source_label=str(payload.get("source_label") or "OpenStreetMap raceway geometry"),
+        source_note=str(payload.get("source_note") or "Cached geometry from output folder"),
+        source_urls={str(key): value for key, value in dict(source_urls).items()},
+        geographic_points=[
+            LatLonPoint(lat=float(point["lat"]), lon=float(point["lon"])) for point in points
+        ],
+        local_points=[
+            LocalPoint(x=float(point["x"]), z=float(point["z"])) for point in points
+        ],
+        distances_m=[float(point["distance_m"]) for point in points],
+        projection_origin=LatLonPoint(lat=float(projection_origin["lat"]), lon=float(projection_origin["lon"])),
+        total_length_m=float(payload["total_length_m"]),
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def load_geometry_from_cache(cache_path: Path) -> GeometryResult | None:
+    if not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text())
+        return geometry_payload_to_result(payload, default_title=cache_path.stem.split("_osm_", 1)[0])
+    except Exception:
+        return None
+
+
+def save_geometry_cache(cache_path: Path, geometry: GeometryResult) -> None:
+    cache_path.write_text(json.dumps(geometry_result_to_payload(geometry), indent=2))
 
 
 def main() -> None:
@@ -1109,8 +1220,9 @@ def main() -> None:
     parser.add_argument("--year", type=int, help="Season year to use")
     parser.add_argument("--session", default="Q", help="FastF1 session code to use, defaults to Q")
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT), help="Root output directory")
-    parser.add_argument("--track-width-m", type=float, default=18.0, help="Ribbon width in meters")
-    parser.add_argument("--elevation-scale", type=float, default=3.0, help="Elevation exaggeration multiplier")
+    parser.add_argument("--track-width-m", type=float, default=18.0, help="Track width in meters")
+    parser.add_argument("--elevation-scale", type=float, default=1.0, help="Elevation exaggeration multiplier")
+    parser.add_argument("--track-depth", type=float, default=18.0, help="Solid track depth in scene units")
     args = parser.parse_args()
 
     event = resolve_event(args.track, args.year, args.session)
@@ -1120,20 +1232,30 @@ def main() -> None:
     output_root = Path(args.output_root).resolve()
     track_root = output_root / sanitize_dirname(title)
     cache_html = track_root / f"{slugify(title)}-3d.html"
+    geometry_cache = track_root / f"{slugify(title)}_osm_raceway.json"
+    track_root.mkdir(parents=True, exist_ok=True)
     geometry_provider = OSMGeometryProvider(track_config)
-    try:
-        geometry = geometry_provider.resolve(args.track, event)
-    except RuntimeError as exc:
-        cached_geometry = load_geometry_from_html(cache_html)
-        if cached_geometry is None:
-            raise
-        print(f"Using cached 3D geometry from {cache_html}", file=sys.stderr)
-        geometry = cached_geometry
+    geometry = load_geometry_from_cache(geometry_cache)
+    if geometry is not None:
+        print(f"Using cached geometry from {geometry_cache}", file=sys.stderr)
+    else:
+        try:
+            geometry = geometry_provider.resolve(args.track, event)
+        except RuntimeError:
+            cached_geometry = load_geometry_from_html(cache_html)
+            if cached_geometry is None:
+                raise
+            print(f"Using cached 3D geometry from {cache_html}", file=sys.stderr)
+            geometry = cached_geometry
+        save_geometry_cache(geometry_cache, geometry)
     elevation_provider = FastF1ElevationProvider(args.elevation_scale)
     elevation = elevation_provider.resolve(args.track, event, geometry)
 
-    theme = RenderTheme(track_width_m=args.track_width_m, elevation_scale=args.elevation_scale)
-    track_root.mkdir(parents=True, exist_ok=True)
+    theme = RenderTheme(
+        track_width_m=args.track_width_m,
+        elevation_scale=args.elevation_scale,
+        track_depth=args.track_depth,
+    )
     html_path = track_root / f"{slugify(title)}-3d.html"
     html_path.write_text(build_html_document(geometry, elevation, event, theme))
     print(str(html_path))

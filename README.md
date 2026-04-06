@@ -217,7 +217,9 @@ python3 generate_track_3d.py Imola --year 2024
 ```
 
 The 3D script writes a single HTML file into `output/<Track>/`, for example `output/Imola/imola-3d.html`.
-It uses a `geometry_provider` and an `elevation_provider` facade so the OSM geometry source and FastF1 elevation source can be swapped out in later versions without changing the renderer contract.
+When FastF1 data is available, it uses FastF1 telemetry for elevation. When no FastF1 event exists, it prefers trusted track geometry from the config or track databases, scales it to the configured real-world track length if one is available, and then falls back to a free DEM source via OpenTopoData for elevation.
+
+For geometry-only tracks such as Brands Hatch, the first run also saves local geometry and elevation caches in the track folder, for example `output/Brands Hatch/brands-hatch_geometry_v3.json` and `output/Brands Hatch/brands-hatch_elevation_profile.json`, so reruns can regenerate the same 3D output without re-querying remote services.
 
 ## Local post-process editor
 

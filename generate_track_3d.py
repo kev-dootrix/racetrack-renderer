@@ -5,11 +5,13 @@ import csv
 from datetime import datetime
 import io
 import html
+import hashlib
 import json
 import math
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from functools import lru_cache
@@ -100,7 +102,13 @@ class GeometryProvider(Protocol):
 
 
 class ElevationProvider(Protocol):
-    def resolve(self, track_query: str, event: TrackEvent, geometry: GeometryResult) -> ElevationResult: ...
+    def resolve(
+        self,
+        track_query: str,
+        event: TrackEvent | None,
+        geometry: GeometryResult,
+        track_root: Path,
+    ) -> ElevationResult: ...
 
 
 def ensure_fastf1():
@@ -130,6 +138,128 @@ def normalize(value: str) -> str:
 
 def compact(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def geometry_signature(geometry: GeometryResult) -> str:
+    payload = {
+        "projection_origin": {
+            "lat": round(geometry.projection_origin.lat, 7),
+            "lon": round(geometry.projection_origin.lon, 7),
+        },
+        "points": [
+            {
+                "lat": round(point.lat, 7),
+                "lon": round(point.lon, 7),
+                "x": round(local.x, 4),
+                "z": round(local.z, 4),
+            }
+            for point, local in zip(geometry.geographic_points, geometry.local_points)
+        ],
+        "total_length_m": round(geometry.total_length_m, 3),
+    }
+    return hashlib.sha1(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def target_track_length_m(track_config: dict[str, Any]) -> float | None:
+    for key in ("track_length_m", "expected_length_m", "lap_length_m"):
+        value = track_config.get(key)
+        try:
+            if value is not None:
+                parsed = float(value)
+                if parsed > 0:
+                    return parsed
+        except Exception:
+            continue
+    return None
+
+
+def scale_local_points_to_length(points: list[LocalPoint], target_length_m: float | None) -> list[LocalPoint]:
+    if not points or target_length_m is None or target_length_m <= 0:
+        return list(points)
+    raw_length = closed_loop_length(points)
+    if raw_length <= 0:
+        return list(points)
+    scale = target_length_m / raw_length
+    return [LocalPoint(x=point.x * scale, z=point.z * scale) for point in points]
+
+
+def geometry_length_scale_factor(points: list[LocalPoint], target_length_m: float | None) -> float | None:
+    if not points or target_length_m is None or target_length_m <= 0:
+        return None
+    raw_length = closed_loop_length(points)
+    if raw_length <= 0:
+        return None
+    return target_length_m / raw_length
+
+
+def closed_loop_length(points: list[LocalPoint]) -> float:
+    if len(points) < 2:
+        return 0.0
+    closed_points = list(points)
+    if closed_points[0] != closed_points[-1]:
+        closed_points.append(closed_points[0])
+    return cumulative_dist(closed_points)[-1]
+
+
+def interpolate_closed_local_point(
+    points: list[LocalPoint],
+    distances: list[float],
+    target: float,
+) -> LocalPoint:
+    if not points or not distances:
+        return LocalPoint(0.0, 0.0)
+    if len(points) != len(distances):
+        raise ValueError("Point and distance arrays must have the same length.")
+
+    total = distances[-1]
+    if total <= 0:
+        return points[0]
+
+    while target < 0:
+        target += total
+    while target > total:
+        target -= total
+
+    if target <= distances[0]:
+        return points[0]
+
+    for idx in range(len(distances) - 1):
+        start_distance = distances[idx]
+        end_distance = distances[idx + 1]
+        if start_distance <= target <= end_distance:
+            span = end_distance - start_distance
+            if span <= 0:
+                return points[idx]
+            t = (target - start_distance) / span
+            return LocalPoint(
+                x=interpolate_float(points[idx].x, points[idx + 1].x, t),
+                z=interpolate_float(points[idx].z, points[idx + 1].z, t),
+            )
+    return points[-1]
+
+
+def fill_missing_circular(values: list[float | None]) -> list[float]:
+    if not values:
+        return []
+
+    known_indices = [index for index, value in enumerate(values) if value is not None]
+    if not known_indices:
+        raise RuntimeError("DEM lookup returned no usable elevation samples.")
+    if len(known_indices) == 1:
+        return [float(values[known_indices[0]])] * len(values)
+
+    filled = [float(value) if value is not None else 0.0 for value in values]
+    circular_indices = known_indices + [known_indices[0] + len(values)]
+
+    for start_index, end_index in zip(circular_indices, circular_indices[1:]):
+        start_value = filled[start_index % len(values)]
+        end_value = filled[end_index % len(values)]
+        gap = end_index - start_index
+        for offset in range(1, gap):
+            position = (start_index + offset) % len(values)
+            filled[position] = interpolate_float(start_value, end_value, offset / gap)
+
+    return filled
 
 
 def candidate_strings(*values: str) -> list[str]:
@@ -212,6 +342,77 @@ def load_raceline_points(url: str) -> tuple[list[LocalPoint], list[float], list[
     return points, s_values, headings, curvatures
 
 
+def resolve_geometry_anchor(title: str, event_fields: list[str], track_config: dict[str, Any]) -> LatLonPoint | None:
+    config_terms = sorted(
+        {str(term).strip() for term in track_config.get("match_terms", []) if str(term).strip()},
+        key=lambda value: (-len(value), value.lower()),
+    )
+    search_queries = [
+        *config_terms,
+        title,
+        *event_fields,
+        f"{title} circuit",
+        f"{title} raceway",
+        f"{title} motorsport circuit",
+    ]
+    for query in search_queries:
+        query = query.strip()
+        if not query:
+            continue
+        result = nominatim_search(query)
+        if not result:
+            continue
+        try:
+            return LatLonPoint(lat=float(result["lat"]), lon=float(result["lon"]))
+        except Exception:
+            continue
+    return None
+
+
+def elevation_cache_path(track_root: Path, title: str) -> Path:
+    return track_root / f"{slugify(title)}_elevation_profile.json"
+
+
+def load_elevation_cache(cache_path: Path, expected_signature: str, expected_count: int) -> ElevationResult | None:
+    if not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text())
+        if payload.get("geometry_signature") != expected_signature:
+            return None
+        if int(payload.get("sample_count", -1)) != expected_count:
+            return None
+        return ElevationResult(
+            source_label=str(payload.get("source_label") or "OpenTopoData DEM profile"),
+            source_note=str(payload.get("source_note") or "OpenTopoData DEM samples cached locally"),
+            elevations_m=[float(value) for value in payload.get("elevations_m", [])],
+            min_elevation_m=float(payload.get("min_elevation_m", 0.0)),
+            max_elevation_m=float(payload.get("max_elevation_m", 0.0)),
+            metadata=dict(payload.get("metadata") or {}),
+        )
+    except Exception:
+        return None
+
+
+def save_elevation_cache(
+    cache_path: Path,
+    geometry_signature_value: str,
+    elevation: ElevationResult,
+    sample_count: int,
+) -> None:
+    payload = {
+        "geometry_signature": geometry_signature_value,
+        "sample_count": sample_count,
+        "source_label": elevation.source_label,
+        "source_note": elevation.source_note,
+        "elevations_m": elevation.elevations_m,
+        "min_elevation_m": elevation.min_elevation_m,
+        "max_elevation_m": elevation.max_elevation_m,
+        "metadata": elevation.metadata,
+    }
+    cache_path.write_text(json.dumps(payload, indent=2))
+
+
 def geometry_result_from_local_points(
     title: str,
     points: list[LocalPoint],
@@ -219,16 +420,20 @@ def geometry_result_from_local_points(
     source_note: str,
     source_urls: dict[str, str | None],
     metadata: dict[str, Any],
+    projection_origin: LatLonPoint | None = None,
 ) -> GeometryResult:
     if not points:
         raise ValueError("Cannot build geometry from an empty point list.")
     local_points = list(points)
     if local_points[0] != local_points[-1]:
         local_points.append(local_points[0])
+    projection_origin = projection_origin or LatLonPoint(lat=0.0, lon=0.0)
+    meters_per_deg_lon = 111320.0 * math.cos(math.radians(projection_origin.lat))
+    meters_per_deg_lon = meters_per_deg_lon if abs(meters_per_deg_lon) > 1e-9 else 1e-9
     geographic_points = [
         LatLonPoint(
-            lat=point.z / 111132.0,
-            lon=point.x / 111320.0,
+            lat=projection_origin.lat + point.z / 111132.0,
+            lon=projection_origin.lon + point.x / meters_per_deg_lon,
         )
         for point in local_points
     ]
@@ -241,7 +446,7 @@ def geometry_result_from_local_points(
         geographic_points=geographic_points,
         local_points=local_points,
         distances_m=distances_m,
-        projection_origin=LatLonPoint(lat=0.0, lon=0.0),
+        projection_origin=projection_origin,
         total_length_m=distances_m[-1] if distances_m else 0.0,
         metadata=metadata,
     )
@@ -625,6 +830,42 @@ def overpass_request(query: str) -> dict[str, Any] | None:
     return None
 
 
+def fetch_opentopodata_elevations(
+    locations: list[LatLonPoint],
+    datasets: tuple[str, ...],
+    batch_size: int = 100,
+) -> list[float | None]:
+    if not locations:
+        return []
+
+    dataset_path = ",".join(datasets)
+    results: list[float | None] = []
+    for batch_index, start in enumerate(range(0, len(locations), batch_size)):
+        batch = locations[start : start + batch_size]
+        if batch_index:
+            time.sleep(1.1)
+
+        location_arg = "|".join(f"{point.lat:.6f},{point.lon:.6f}" for point in batch)
+        url = f"https://api.opentopodata.org/v1/{dataset_path}?locations={quote(location_arg, safe='|,.-')}"
+        req = Request(url, headers={"User-Agent": "TrackMaker/1.0"})
+        with urlopen(req, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        status = str(payload.get("status", "")).upper()
+        if status not in {"OK", "PARTIAL"}:
+            raise RuntimeError(f"OpenTopoData returned status '{status or 'UNKNOWN'}'.")
+
+        batch_results = payload.get("results", [])
+        if len(batch_results) != len(batch):
+            raise RuntimeError("OpenTopoData returned an unexpected number of elevation samples.")
+
+        for item in batch_results:
+            elevation = item.get("elevation")
+            results.append(None if elevation is None else float(elevation))
+
+    return results
+
+
 def best_event_match(fastf1, track_query: str, year: int | None) -> tuple[int, Any]:
     current_year = datetime.now().year
     years = [year] if year else list(range(current_year, current_year - 5, -1))
@@ -923,8 +1164,13 @@ class OSMGeometryProvider:
     def __init__(self, track_config: dict[str, Any] | None = None):
         self.track_config = track_config or {}
 
-    def resolve(self, track_query: str, event: TrackEvent) -> GeometryResult:
-        candidates = candidate_strings(track_query, *event.fields)
+    def resolve(
+        self,
+        track_query: str,
+        event_fields: list[str],
+        shape_reference: list[LocalPoint] | None = None,
+    ) -> GeometryResult:
+        candidates = candidate_strings(track_query, *event_fields)
         config_terms = sorted(
             {str(term).strip() for term in self.track_config.get("match_terms", []) if str(term).strip()},
             key=lambda value: (-len(value), value.lower()),
@@ -937,11 +1183,9 @@ class OSMGeometryProvider:
             track_query,
             f"{track_query} circuit",
             f"{track_query} raceway",
-            event.location,
-            event.event_name,
-            event.official_event_name,
-            f"{event.location} circuit",
-            f"{event.location} raceway",
+            *event_fields,
+            *[f"{field} circuit" for field in event_fields],
+            *[f"{field} raceway" for field in event_fields],
         ]
 
         nominatim_result = None
@@ -982,7 +1226,6 @@ class OSMGeometryProvider:
             for term in self.track_config.get("avoid_route_terms", [])
             if str(term).strip()
         ]
-        shape_reference = load_fastf1_shape_hint(event)
 
         radius_candidates = [
             max(900.0, radius * 0.7),
@@ -1046,7 +1289,8 @@ out tags geom qt;"""
 
         local_points = [*open_loop, open_loop[0]]
         distances_m = cumulative_dist(local_points)
-        title = str(nominatim_result.get("name") or event.location or track_query).strip()
+        title_source = event_fields[0] if event_fields else track_query
+        title = str(nominatim_result.get("name") or title_source or track_query).strip()
 
         return GeometryResult(
             title=title,
@@ -1075,7 +1319,15 @@ class FastF1ElevationProvider:
     def __init__(self, elevation_scale: float):
         self.elevation_scale = float(elevation_scale)
 
-    def resolve(self, track_query: str, event: TrackEvent, geometry: GeometryResult) -> ElevationResult:
+    def resolve(
+        self,
+        track_query: str,
+        event: TrackEvent | None,
+        geometry: GeometryResult,
+        track_root: Path,
+    ) -> ElevationResult:
+        if event is None:
+            raise RuntimeError("FastF1 elevation requires a FastF1 event.")
         fastf1 = ensure_fastf1()
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         fastf1.Cache.enable_cache(str(CACHE_DIR))
@@ -1200,11 +1452,75 @@ class FastF1ElevationProvider:
         )
 
 
-def resolve_event(track_query: str, year: int | None, session_type: str) -> TrackEvent:
+class OpenTopoDataElevationProvider:
+    def __init__(self, elevation_scale: float, datasets: tuple[str, ...] = ("eudem25m", "srtm30m", "aster30m")):
+        self.elevation_scale = float(elevation_scale)
+        self.datasets = datasets
+
+    def resolve(
+        self,
+        track_query: str,
+        event: TrackEvent | None,
+        geometry: GeometryResult,
+        track_root: Path,
+    ) -> ElevationResult:
+        cache_path = elevation_cache_path(track_root, geometry.title)
+        expected_signature = geometry_signature(geometry)
+        expected_count = max(len(geometry.local_points) - 1, 1)
+        cached = load_elevation_cache(cache_path, expected_signature, expected_count)
+        if cached is not None:
+            return cached
+
+        locations = geometry.geographic_points[:-1] if len(geometry.geographic_points) > 1 else geometry.geographic_points
+        raw_samples = fetch_opentopodata_elevations(locations, self.datasets)
+        if len(raw_samples) != expected_count:
+            raise RuntimeError("OpenTopoData returned an unexpected number of samples for the track geometry.")
+
+        smoothed = fill_missing_circular(raw_samples)
+        smoothed = smooth_circular(smoothed, radius=max(2, min(7, len(smoothed) // 80 or 2)), passes=1)
+        min_elevation = min(smoothed)
+        shifted = [value - min_elevation for value in smoothed]
+        max_elevation = max(shifted)
+
+        result = ElevationResult(
+            source_label="OpenTopoData DEM profile",
+            source_note=f"OpenTopoData samples from {', '.join(self.datasets)} cached in the track folder",
+            elevations_m=shifted,
+            min_elevation_m=0.0,
+            max_elevation_m=max_elevation,
+            metadata={
+                "track_query": track_query,
+                "geometry_title": geometry.title,
+                "provider": "OpenTopoData",
+                "datasets": list(self.datasets),
+                "request_url": f"https://api.opentopodata.org/v1/{','.join(self.datasets)}",
+                "sample_count": len(shifted),
+                "geometry_signature": expected_signature,
+                "track_root": str(track_root),
+                "elevation_scale": self.elevation_scale,
+                "cache_file": cache_path.name,
+                "event": {
+                    "season_year": getattr(event, "season_year", None),
+                    "event_name": getattr(event, "event_name", None),
+                    "official_event_name": getattr(event, "official_event_name", None),
+                    "location": getattr(event, "location", None),
+                    "country": getattr(event, "country", None),
+                    "session_type": getattr(event, "session_type", None),
+                },
+            },
+        )
+        save_elevation_cache(cache_path, expected_signature, result, len(shifted))
+        return result
+
+
+def resolve_event(track_query: str, year: int | None, session_type: str) -> TrackEvent | None:
     fastf1 = ensure_fastf1()
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fastf1.Cache.enable_cache(str(CACHE_DIR))
-    season_year, event = best_event_match(fastf1, track_query, year)
+    try:
+        season_year, event = best_event_match(fastf1, track_query, year)
+    except ValueError:
+        return None
     return TrackEvent(
         season_year=season_year,
         event_name=str(event.get("EventName")),
@@ -1218,14 +1534,16 @@ def resolve_event(track_query: str, year: int | None, session_type: str) -> Trac
 def build_html_document(
     geometry: GeometryResult,
     elevation: ElevationResult,
-    event: TrackEvent,
+    event: TrackEvent | None,
     theme: RenderTheme,
     display_title: str,
 ) -> str:
     data = {
         "title": display_title,
         "resolved_title": geometry.title,
-        "event": {
+        "event": None
+        if event is None
+        else {
             "season_year": event.season_year,
             "event_name": event.event_name,
             "official_event_name": event.official_event_name,
@@ -1283,7 +1601,10 @@ def build_html_document(
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     title_escaped = html.escape(display_title)
     info_line = html.escape(f"{geometry.source_label} • {elevation.source_label}")
-    event_line = html.escape(f"{event.location} • {event.session_type} {event.season_year}")
+    if event is None:
+        event_line = html.escape("Geometry-only • OpenTopoData DEM")
+    else:
+        event_line = html.escape(f"{event.location} • {event.session_type} {event.season_year}")
     track_length_km = geometry.total_length_m / 1000.0
     elevation_span_m = elevation.max_elevation_m - elevation.min_elevation_m
 
@@ -1843,11 +2164,312 @@ def resolve_geometry(track_query: str, event: TrackEvent, track_config: dict[str
         return geometry
 
     geometry_provider = OSMGeometryProvider(track_config)
-    return geometry_provider.resolve(track_query, event)
+    return geometry_provider.resolve(track_query, event.fields, load_fastf1_shape_hint(event))
+
+
+def resolve_trusted_geometry_geometry_only(
+    track_query: str,
+    event_fields: list[str],
+    track_config: dict[str, Any],
+    projection_origin: LatLonPoint | None,
+) -> GeometryResult | None:
+    target_length_m = target_track_length_m(track_config)
+
+    explicit_centerline = str(track_config.get("centerline_url", "")).strip()
+    explicit_raceline = str(track_config.get("raceline_url", "")).strip()
+
+    if explicit_centerline or explicit_raceline:
+        source_label = "configured geometry"
+        source_note = "track config override"
+        geometry_source = str(track_config.get("geometry_source", "auto")).lower()
+        if geometry_source == "track_database":
+            source_label = "TUMFTM track centerline"
+            source_note = "track_database config override"
+        elif geometry_source == "f1tenth_racetrack":
+            source_label = "F1TENTH track centerline"
+            source_note = "f1tenth config override"
+
+        if explicit_centerline:
+            raw_points = load_centerline_points(explicit_centerline)
+            if not raw_points:
+                return None
+            scale_factor = geometry_length_scale_factor(raw_points, target_length_m)
+            points = scale_local_points_to_length(raw_points, target_length_m)
+            return geometry_result_from_local_points(
+                title=track_query,
+                points=points,
+                source_label=source_label,
+                source_note=source_note,
+                source_urls={"centerline": explicit_centerline, "raceline": None},
+                metadata={
+                    "track_query": track_query,
+                    "config_terms": track_config.get("match_terms", []),
+                    "geometry_source": geometry_source if geometry_source != "auto" else "track_database",
+                    "source_repo": None,
+                    "target_track_length_m": target_length_m,
+                    "geometry_length_scale_factor": scale_factor,
+                },
+                projection_origin=projection_origin,
+            )
+
+        raw_points, _, _, _ = load_raceline_points(explicit_raceline)
+        if not raw_points:
+            return None
+        scale_factor = geometry_length_scale_factor(raw_points, target_length_m)
+        points = scale_local_points_to_length(raw_points, target_length_m)
+        return geometry_result_from_local_points(
+            title=track_query,
+            points=points,
+            source_label=source_label,
+            source_note=source_note,
+            source_urls={"centerline": None, "raceline": explicit_raceline},
+            metadata={
+                "track_query": track_query,
+                "config_terms": track_config.get("match_terms", []),
+                "geometry_source": geometry_source if geometry_source != "auto" else "f1tenth_racetrack",
+                "source_repo": None,
+                "target_track_length_m": target_length_m,
+                "geometry_length_scale_factor": scale_factor,
+            },
+            projection_origin=projection_origin,
+        )
+
+    candidates = candidate_strings(track_query, *event_fields)
+    if not candidates:
+        return None
+
+    try:
+        tumftm_tracks = github_contents("TUMFTM/racetrack-database", "tracks")
+    except Exception:
+        tumftm_tracks = []
+
+    tumftm_available = {
+        compact(item.get("name", "")): item.get("download_url", "")
+        for item in tumftm_tracks
+        if item.get("type") == "file" and str(item.get("name", "")).lower().endswith(".csv")
+    }
+    tumftm_url = match_compact_name(candidates, tumftm_available)
+    if tumftm_url:
+        raw_points = load_centerline_points(tumftm_url)
+        if raw_points:
+            scale_factor = geometry_length_scale_factor(raw_points, target_length_m)
+            points = scale_local_points_to_length(raw_points, target_length_m)
+            return geometry_result_from_local_points(
+                title=track_query,
+                points=points,
+                source_label="TUMFTM track centerline",
+                source_note="TUMFTM centerline database",
+                source_urls={"centerline": tumftm_url, "raceline": None},
+                metadata={
+                    "track_query": track_query,
+                    "config_terms": track_config.get("match_terms", []),
+                    "geometry_source": "track_database",
+                    "source_repo": "TUMFTM/racetrack-database",
+                    "target_track_length_m": target_length_m,
+                    "geometry_length_scale_factor": scale_factor,
+                },
+                projection_origin=projection_origin,
+            )
+
+    try:
+        f1tenth_roots = github_contents("f1tenth/f1tenth_racetracks")
+    except Exception:
+        f1tenth_roots = []
+
+    directory_map = {
+        compact(item.get("name", "")): item.get("path", item.get("name", ""))
+        for item in f1tenth_roots
+        if item.get("type") == "dir"
+    }
+    match_path = match_compact_name(candidates, directory_map)
+    if match_path:
+        try:
+            directory_items = github_contents("f1tenth/f1tenth_racetracks", match_path)
+        except Exception:
+            directory_items = []
+        centerline_url = None
+        raceline_url = None
+        for item in directory_items:
+            if item.get("type") != "file":
+                continue
+            name = str(item.get("name", ""))
+            if name.endswith("_centerline.csv"):
+                centerline_url = item.get("download_url", centerline_url)
+            elif name.endswith("_raceline.csv"):
+                raceline_url = item.get("download_url", raceline_url)
+        if centerline_url or raceline_url:
+            if centerline_url:
+                raw_points = load_centerline_points(centerline_url)
+                source_label = "F1TENTH track centerline"
+                source_note = "F1TENTH track database"
+                source_urls = {"centerline": centerline_url, "raceline": raceline_url}
+            else:
+                raw_points, _, _, _ = load_raceline_points(raceline_url or "")
+                source_label = "F1TENTH track centerline"
+                source_note = "F1TENTH track database"
+                source_urls = {"centerline": centerline_url, "raceline": raceline_url}
+            if raw_points:
+                scale_factor = geometry_length_scale_factor(raw_points, target_length_m)
+                points = scale_local_points_to_length(raw_points, target_length_m)
+                return geometry_result_from_local_points(
+                    title=track_query,
+                    points=points,
+                    source_label=source_label,
+                    source_note=source_note,
+                    source_urls=source_urls,
+                    metadata={
+                        "track_query": track_query,
+                        "config_terms": track_config.get("match_terms", []),
+                        "geometry_source": "f1tenth_racetrack",
+                        "source_repo": "f1tenth/f1tenth_racetracks",
+                        "target_track_length_m": target_length_m,
+                        "geometry_length_scale_factor": scale_factor,
+                    },
+                    projection_origin=projection_origin,
+                )
+
+    return None
+
+
+def resolve_geometry_geometry_only(track_query: str, track_config: dict[str, Any], title: str) -> GeometryResult:
+    event_fields = [track_query, title, *track_config.get("match_terms", [])]
+    projection_origin = resolve_geometry_anchor(track_query, [str(field) for field in event_fields if str(field).strip()], track_config)
+    trusted_geometry = resolve_trusted_geometry_geometry_only(
+        track_query=track_query,
+        event_fields=[str(field) for field in event_fields if str(field).strip()],
+        track_config=track_config,
+        projection_origin=projection_origin,
+    )
+    if trusted_geometry is not None:
+        return trusted_geometry
+
+    geometry_provider = OSMGeometryProvider(track_config)
+    return geometry_provider.resolve(track_query, [str(field) for field in event_fields if str(field).strip()], None)
+
+
+def render_track_3d(
+    track: str,
+    year: int | None,
+    session: str,
+    output_root_value: str,
+    track_width_m: float,
+    elevation_scale: float,
+    track_depth: float,
+) -> Path:
+    event = resolve_event(track, year, session)
+    config = load_track_configs()
+    track_fields = event.fields if event is not None else [track]
+    track_config = find_track_config(track, track_fields, config) or {}
+    title = str(track_config.get("title") or (event.location if event else track) or track).strip() or "Track"
+    output_root = Path(output_root_value).resolve()
+    track_root = output_root / sanitize_dirname(title)
+    cache_html = track_root / f"{slugify(title)}-3d.html"
+    geometry_cache = track_root / f"{slugify(title)}_geometry_v3.json"
+    track_root.mkdir(parents=True, exist_ok=True)
+    geometry = load_geometry_from_cache(geometry_cache)
+    if geometry is not None:
+        print(f"Using cached geometry from {geometry_cache}", file=sys.stderr)
+    else:
+        try:
+            if event is not None:
+                geometry = resolve_geometry(track, event, track_config)
+            else:
+                geometry = resolve_geometry_geometry_only(track, track_config, title)
+        except RuntimeError:
+            cached_geometry = load_geometry_from_html(cache_html)
+            if cached_geometry is None:
+                raise
+            print(f"Using cached 3D geometry from {cache_html}", file=sys.stderr)
+            geometry = cached_geometry
+        save_geometry_cache(geometry_cache, geometry)
+    if event is None:
+        elevation_provider: ElevationProvider = OpenTopoDataElevationProvider(elevation_scale)
+        elevation = elevation_provider.resolve(track, event, geometry, track_root)
+    else:
+        elevation_provider = FastF1ElevationProvider(elevation_scale)
+        try:
+            elevation = elevation_provider.resolve(track, event, geometry, track_root)
+        except RuntimeError:
+            if str(geometry.metadata.get("geometry_source")) == "osm_raceway":
+                print("FastF1 elevation unavailable, falling back to OpenTopoData DEM.", file=sys.stderr)
+                elevation = OpenTopoDataElevationProvider(elevation_scale).resolve(track, event, geometry, track_root)
+            else:
+                raise
+
+    theme = RenderTheme(
+        track_width_m=track_width_m,
+        elevation_scale=elevation_scale,
+        track_depth=track_depth,
+    )
+    html_path = track_root / f"{slugify(title)}-3d.html"
+    html_path.write_text(build_html_document(geometry, elevation, event, theme, display_title=title))
+
+    if event is None:
+        source_metadata = {
+            "title": title,
+            "event": {
+                "year": None,
+                "event_name": title,
+                "official_event_name": title,
+                "location": title,
+                "country": "",
+                "session_type": None,
+            },
+            "fastest_lap": None,
+            "sources": [
+                geometry.source_label,
+                elevation.source_label,
+                "Track-config corner labels and geometry-derived marker placement",
+                "OpenTopoData DEM samples cached in the track folder",
+            ],
+            "data_urls": {
+                **geometry.source_urls,
+                "elevation": elevation.metadata.get("request_url"),
+            },
+            "data_files": {
+                "geometry": geometry_cache.name,
+                "elevation_profile": elevation.metadata.get("cache_file"),
+            },
+            "sector_splits": [],
+            "config_overrides_used": {
+                "track_config_id": track_config.get("id"),
+                "rotation_degrees": float(track_config.get("rotation_degrees", 0.0)),
+                "corner_labels": bool(track_config.get("corner_labels")),
+                "marker_spread_hints": bool(track_config.get("marker_spread_hints")),
+                "geometry_source": geometry.metadata.get("geometry_source", geometry.source_label),
+                "geometry_only": True,
+                "target_track_length_m": geometry.metadata.get("target_track_length_m"),
+                "geometry_length_scale_factor": geometry.metadata.get("geometry_length_scale_factor"),
+            },
+        }
+        cum = geometry.distances_m
+        split_1 = cum[-1] / 3.0 if cum else 0.0
+        split_2 = cum[-1] * 2.0 / 3.0 if cum else 0.0
+        if geometry.local_points and geometry.distances_m:
+            point_1 = interpolate_closed_local_point(geometry.local_points, geometry.distances_m, split_1)
+            point_2 = interpolate_closed_local_point(geometry.local_points, geometry.distances_m, split_2)
+            source_metadata["sector_splits"] = [
+                {
+                    "sector": 1,
+                    "method": "equal thirds of centerline distance",
+                    "distance_along_trace": round(split_1, 3),
+                    "point": {"x": round(point_1.x, 3), "y": round(point_1.z, 3)},
+                },
+                {
+                    "sector": 2,
+                    "method": "equal thirds of centerline distance",
+                    "distance_along_trace": round(split_2, 3),
+                    "point": {"x": round(point_2.x, 3), "y": round(point_2.z, 3)},
+                },
+            ]
+        (track_root / "source_metadata.json").write_text(json.dumps(source_metadata, indent=2))
+
+    print(str(html_path))
+    return html_path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate a 3D HTML track ribbon from OSM geometry and FastF1 elevation.")
+    parser = argparse.ArgumentParser(description="Generate a 3D HTML track ribbon from FastF1 or DEM-backed elevation.")
     parser.add_argument("track", help="Track or event name, e.g. Imola, Monza, Suzuka")
     parser.add_argument("--year", type=int, help="Season year to use")
     parser.add_argument("--session", default="Q", help="FastF1 session code to use, defaults to Q")
@@ -1857,39 +2479,15 @@ def main() -> None:
     parser.add_argument("--track-depth", type=float, default=18.0, help="Solid track depth in scene units")
     args = parser.parse_args()
 
-    event = resolve_event(args.track, args.year, args.session)
-    config = load_track_configs()
-    track_config = find_track_config(args.track, event.fields, config) or {}
-    title = str(track_config.get("title") or event.location or args.track).strip() or "Track"
-    output_root = Path(args.output_root).resolve()
-    track_root = output_root / sanitize_dirname(title)
-    cache_html = track_root / f"{slugify(title)}-3d.html"
-    geometry_cache = track_root / f"{slugify(title)}_geometry.json"
-    track_root.mkdir(parents=True, exist_ok=True)
-    geometry = load_geometry_from_cache(geometry_cache)
-    if geometry is not None:
-        print(f"Using cached geometry from {geometry_cache}", file=sys.stderr)
-    else:
-        try:
-            geometry = resolve_geometry(args.track, event, track_config)
-        except RuntimeError:
-            cached_geometry = load_geometry_from_html(cache_html)
-            if cached_geometry is None:
-                raise
-            print(f"Using cached 3D geometry from {cache_html}", file=sys.stderr)
-            geometry = cached_geometry
-        save_geometry_cache(geometry_cache, geometry)
-    elevation_provider = FastF1ElevationProvider(args.elevation_scale)
-    elevation = elevation_provider.resolve(args.track, event, geometry)
-
-    theme = RenderTheme(
+    render_track_3d(
+        track=args.track,
+        year=args.year,
+        session=args.session,
+        output_root_value=args.output_root,
         track_width_m=args.track_width_m,
         elevation_scale=args.elevation_scale,
         track_depth=args.track_depth,
     )
-    html_path = track_root / f"{slugify(title)}-3d.html"
-    html_path.write_text(build_html_document(geometry, elevation, event, theme, display_title=title))
-    print(str(html_path))
 
 
 if __name__ == "__main__":

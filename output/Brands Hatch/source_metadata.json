@@ -11,33 +11,36 @@
   "fastest_lap": null,
   "sources": [
     "F1TENTH track centerline",
+    "OpenTopoData DEM profile",
     "Track-config corner labels and geometry-derived marker placement",
-    "Equal-thirds sector splits derived from the centerline geometry"
+    "OpenTopoData DEM samples cached in the track folder"
   ],
   "data_urls": {
     "centerline": "https://raw.githubusercontent.com/f1tenth/f1tenth_racetracks/main/BrandsHatch/BrandsHatch_centerline.csv",
-    "raceline": "https://raw.githubusercontent.com/f1tenth/f1tenth_racetracks/main/BrandsHatch/BrandsHatch_raceline.csv"
+    "raceline": null,
+    "elevation": "https://api.opentopodata.org/v1/eudem25m,srtm30m,aster30m"
   },
   "data_files": {
-    "geometry": null
+    "geometry": "brands-hatch_geometry_v3.json",
+    "elevation_profile": "brands-hatch_elevation_profile.json"
   },
   "sector_splits": [
     {
       "sector": 1,
       "method": "equal thirds of centerline distance",
-      "distance_along_trace": 118.762,
+      "distance_along_trace": 1302.667,
       "point": {
-        "x": 26.782,
-        "y": -14.99
+        "x": -120.397,
+        "y": -245.493
       }
     },
     {
       "sector": 2,
       "method": "equal thirds of centerline distance",
-      "distance_along_trace": 237.525,
+      "distance_along_trace": 2605.333,
       "point": {
-        "x": -27.204,
-        "y": -43.896
+        "x": 196.665,
+        "y": -837.643
       }
     }
   ],
@@ -46,7 +49,9 @@
     "rotation_degrees": -90.0,
     "corner_labels": true,
     "marker_spread_hints": false,
-    "geometry_source": "F1TENTH track centerline",
-    "geometry_only": true
+    "geometry_source": "f1tenth_racetrack",
+    "geometry_only": true,
+    "target_track_length_m": 3908.0,
+    "geometry_length_scale_factor": 10.968686648492767
   }
 }

@@ -7,6 +7,7 @@ It supports multiple geometry sources, per-track layout overrides, and two modes
 - geometry-only tracks, where the circuit is built from a non-F1 centerline source
 
 The current generator is [`generate_track_svg.py`](./generate_track_svg.py).
+There is also a standalone 3D viewer generator, [`generate_track_3d.py`](./generate_track_3d.py), which writes a single-page HTML track ribbon with elevation.
 
 ## What the script does
 
@@ -208,6 +209,15 @@ Generate a non-F1 geometry-only track:
 ```bash
 python3 generate_track_svg.py "Brands Hatch" --year 2024
 ```
+
+Generate a 3D elevation ribbon:
+
+```bash
+python3 generate_track_3d.py Imola --year 2024
+```
+
+The 3D script writes a single HTML file into `output/<Track>/`, for example `output/Imola/imola-3d.html`.
+It uses a `geometry_provider` and an `elevation_provider` facade so the OSM geometry source and FastF1 elevation source can be swapped out in later versions without changing the renderer contract.
 
 ## Local post-process editor
 

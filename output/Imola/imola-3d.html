@@ -175,7 +175,7 @@
     });
 
     const canvas = document.getElementById("scene");
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, logarithmicDepthBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -186,7 +186,7 @@
     scene.background = new THREE.Color(theme.background);
     scene.fog = new THREE.Fog(theme.fog, 3000, 11000);
 
-    const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 50000);
+    const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 5, 50000);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -212,35 +212,99 @@
     backLight.position.set(-1800, 1200, -2400);
     scene.add(backLight);
 
-    function buildSurfaceGeometry(points, widthMeters, yOverride = null) {
-      const count = points.length;
-      if (count < 3) {
-        throw new Error("Not enough centerline points to build a track surface.");
+    function normalize2D(x, z) {
+      const length = Math.hypot(x, z) || 1;
+      return { x: x / length, z: z / length };
+    }
+
+    function intersectOffsetLines(prevPoint, prevDir, nextPoint, nextDir) {
+      const denom = prevDir.x * nextDir.z - prevDir.z * nextDir.x;
+      if (Math.abs(denom) < 1e-6) {
+        return null;
       }
+      const deltaX = nextPoint.x - prevPoint.x;
+      const deltaZ = nextPoint.z - prevPoint.z;
+      const t = (deltaX * nextDir.z - deltaZ * nextDir.x) / denom;
+      return {
+        x: prevPoint.x + prevDir.x * t,
+        z: prevPoint.z + prevDir.z * t,
+      };
+    }
+
+    function buildTrackBoundaries(points, widthMeters) {
+      const count = points.length;
       const halfWidth = widthMeters / 2;
-      const positions = new Float32Array(count * 2 * 3);
-      const indices = [];
+      const left = new Array(count);
+      const right = new Array(count);
+      const maxMiterLength = halfWidth * 2.5;
 
       for (let i = 0; i < count; i++) {
         const prev = points[(i - 1 + count) % count];
         const curr = points[i];
         const next = points[(i + 1) % count];
+
+        const prevDir = normalize2D(curr.x - prev.x, curr.z - prev.z);
+        const nextDir = normalize2D(next.x - curr.x, next.z - curr.z);
+
+        for (const side of ["left", "right"]) {
+          const prevNormal = side === "left"
+            ? { x: -prevDir.z, z: prevDir.x }
+            : { x: prevDir.z, z: -prevDir.x };
+          const nextNormal = side === "left"
+            ? { x: -nextDir.z, z: nextDir.x }
+            : { x: nextDir.z, z: -nextDir.x };
+          const prevPoint = {
+            x: curr.x + prevNormal.x * halfWidth,
+            z: curr.z + prevNormal.z * halfWidth,
+          };
+          const nextPoint = {
+            x: curr.x + nextNormal.x * halfWidth,
+            z: curr.z + nextNormal.z * halfWidth,
+          };
+
+          let join = intersectOffsetLines(prevPoint, prevDir, nextPoint, nextDir);
+          if (!join) {
+            join = nextPoint;
+          }
+
+          const miterX = join.x - curr.x;
+          const miterZ = join.z - curr.z;
+          const miterLength = Math.hypot(miterX, miterZ);
+          if (miterLength > maxMiterLength) {
+            const scale = maxMiterLength / (miterLength || 1);
+            join = {
+              x: curr.x + miterX * scale,
+              z: curr.z + miterZ * scale,
+            };
+          }
+
+          if (side === "left") {
+            left[i] = join;
+          } else {
+            right[i] = join;
+          }
+        }
+      }
+
+      return { left, right };
+    }
+
+    function buildSurfaceGeometry(points, boundaries, yOverride = null) {
+      const count = points.length;
+      if (count < 3) {
+        throw new Error("Not enough centerline points to build a track surface.");
+      }
+      const positions = new Float32Array(count * 2 * 3);
+      const indices = [];
+
+      for (let i = 0; i < count; i++) {
+        const curr = points[i];
         const y = yOverride === null ? curr.y : yOverride;
+        const leftPoint = boundaries.left[i];
+        const rightPoint = boundaries.right[i];
 
-        const tangentX = next.x - prev.x;
-        const tangentZ = next.z - prev.z;
-        const tangentLength = Math.hypot(tangentX, tangentZ) || 1;
-        const ux = tangentX / tangentLength;
-        const uz = tangentZ / tangentLength;
-        const normalX = -uz;
-        const normalZ = ux;
-        const leftX = curr.x + normalX * halfWidth;
-        const leftZ = curr.z + normalZ * halfWidth;
-        const rightX = curr.x - normalX * halfWidth;
-        const rightZ = curr.z - normalZ * halfWidth;
-
-        positions.set([leftX, y, leftZ], i * 6);
-        positions.set([rightX, y, rightZ], i * 6 + 3);
+        positions.set([leftPoint.x, y, leftPoint.z], i * 6);
+        positions.set([rightPoint.x, y, rightPoint.z], i * 6 + 3);
       }
 
       for (let i = 0; i < count; i++) {
@@ -260,9 +324,8 @@
       return geometry;
     }
 
-    function buildSideWallGeometry(points, widthMeters, baseY, side) {
+    function buildSideWallGeometry(points, boundaries, baseY, side) {
       const count = points.length;
-      const halfWidth = widthMeters / 2;
       const positions = new Float32Array(count * 4 * 3);
       const indices = [];
 
@@ -270,32 +333,15 @@
         const next = (i + 1) % count;
         const curr = points[i];
         const nextPoint = points[next];
-        const prev = points[(i - 1 + count) % count];
-        const nextNext = points[(i + 2) % count];
-
-        const currTangentX = nextPoint.x - prev.x;
-        const currTangentZ = nextPoint.z - prev.z;
-        const currTangentLength = Math.hypot(currTangentX, currTangentZ) || 1;
-        const currNormalX = -currTangentZ / currTangentLength;
-        const currNormalZ = currTangentX / currTangentLength;
-
-        const nextTangentX = nextNext.x - curr.x;
-        const nextTangentZ = nextNext.z - curr.z;
-        const nextTangentLength = Math.hypot(nextTangentX, nextTangentZ) || 1;
-        const nextNormalX = -nextTangentZ / nextTangentLength;
-        const nextNormalZ = nextTangentX / nextTangentLength;
-
-        const currTopX = side === "left" ? curr.x + currNormalX * halfWidth : curr.x - currNormalX * halfWidth;
-        const currTopZ = side === "left" ? curr.z + currNormalZ * halfWidth : curr.z - currNormalZ * halfWidth;
-        const nextTopX = side === "left" ? nextPoint.x + nextNormalX * halfWidth : nextPoint.x - nextNormalX * halfWidth;
-        const nextTopZ = side === "left" ? nextPoint.z + nextNormalZ * halfWidth : nextPoint.z - nextNormalZ * halfWidth;
+        const currTop = side === "left" ? boundaries.left[i] : boundaries.right[i];
+        const nextTop = side === "left" ? boundaries.left[next] : boundaries.right[next];
 
         const baseIndex = i * 12;
         positions.set([
-          currTopX, curr.y, currTopZ,
-          nextTopX, nextPoint.y, nextTopZ,
-          nextTopX, baseY, nextTopZ,
-          currTopX, baseY, currTopZ,
+          currTop.x, curr.y, currTop.z,
+          nextTop.x, nextPoint.y, nextTop.z,
+          nextTop.x, baseY, nextTop.z,
+          currTop.x, baseY, currTop.z,
         ], baseIndex);
         indices.push(i * 4, i * 4 + 1, i * 4 + 2);
         indices.push(i * 4, i * 4 + 2, i * 4 + 3);
@@ -321,10 +367,11 @@
 
     const minTopY = Math.min(...centerline.map((point) => point.y));
     const baseY = minTopY - theme.trackDepth;
+    const boundaries = buildTrackBoundaries(centerline, theme.trackWidthM);
 
     const trackGroup = new THREE.Group();
 
-    const topGeometry = buildSurfaceGeometry(centerline, theme.trackWidthM, null);
+    const topGeometry = buildSurfaceGeometry(centerline, boundaries, null);
     const topMaterial = new THREE.MeshStandardMaterial({
       color: theme.trackFill,
       roughness: 0.62,
@@ -333,10 +380,13 @@
       emissiveIntensity: 0.12,
       side: THREE.DoubleSide,
     });
+    topMaterial.polygonOffset = true;
+    topMaterial.polygonOffsetFactor = -1;
+    topMaterial.polygonOffsetUnits = -1;
     const topMesh = new THREE.Mesh(topGeometry, topMaterial);
     trackGroup.add(topMesh);
 
-    const bottomGeometry = buildSurfaceGeometry(centerline, theme.trackWidthM, baseY);
+    const bottomGeometry = buildSurfaceGeometry(centerline, boundaries, baseY);
     const bottomMaterial = new THREE.MeshStandardMaterial({
       color: theme.trackBase,
       roughness: 0.98,
@@ -348,8 +398,8 @@
     const bottomMesh = new THREE.Mesh(bottomGeometry, bottomMaterial);
     trackGroup.add(bottomMesh);
 
-    const leftWallGeometry = buildSideWallGeometry(centerline, theme.trackWidthM, baseY, "left");
-    const rightWallGeometry = buildSideWallGeometry(centerline, theme.trackWidthM, baseY, "right");
+    const leftWallGeometry = buildSideWallGeometry(centerline, boundaries, baseY, "left");
+    const rightWallGeometry = buildSideWallGeometry(centerline, boundaries, baseY, "right");
     const wallMaterial = new THREE.MeshStandardMaterial({
       color: theme.trackSide,
       roughness: 0.88,

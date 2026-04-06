@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime
+import io
 import html
 import json
 import math
@@ -10,6 +12,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from functools import lru_cache
 from typing import Any, Protocol
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -138,6 +141,110 @@ def candidate_strings(*values: str) -> list[str]:
             out.append(compacted)
             seen.add(compacted)
     return out
+
+
+def match_compact_name(candidates: list[str], available: dict[str, str]) -> str | None:
+    for candidate in candidates:
+        if candidate in available:
+            return available[candidate]
+    for candidate in candidates:
+        for key, value in available.items():
+            if candidate and (candidate in key or key in candidate):
+                return value
+    return None
+
+
+@lru_cache(maxsize=8)
+def github_contents(repo: str, path: str = "") -> list[dict[str, Any]]:
+    url = f"https://api.github.com/repos/{repo}/contents"
+    if path:
+        url += f"/{quote(path)}"
+    req = Request(url, headers={"User-Agent": "TrackMaker/1.0", "Accept": "application/vnd.github+json"})
+    with urlopen(req, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if isinstance(payload, dict):
+        return [payload]
+    return list(payload)
+
+
+def fetch_csv_rows(url: str, delimiter: str = ",") -> list[list[str]]:
+    req = Request(url, headers={"User-Agent": "TrackMaker/1.0"})
+    with urlopen(req, timeout=20) as response:
+        text = response.read().decode("utf-8")
+    return [row for row in csv.reader(io.StringIO(text), delimiter=delimiter) if row]
+
+
+def load_centerline_points(url: str) -> list[LocalPoint]:
+    points: list[LocalPoint] = []
+    for row in fetch_csv_rows(url, delimiter=","):
+        if not row or row[0].startswith("#") or len(row) < 2:
+            continue
+        try:
+            points.append(LocalPoint(x=float(row[0]), z=float(row[1])))
+        except ValueError:
+            continue
+    return points
+
+
+def load_raceline_points(url: str) -> tuple[list[LocalPoint], list[float], list[float], list[float]]:
+    points: list[LocalPoint] = []
+    s_values: list[float] = []
+    headings: list[float] = []
+    curvatures: list[float] = []
+    for row in fetch_csv_rows(url, delimiter=";"):
+        if not row or row[0].startswith("#"):
+            continue
+        if len(row) < 5:
+            continue
+        try:
+            s, x, y, psi, kappa, *_rest = map(float, row)
+        except ValueError:
+            continue
+        s_values.append(s)
+        points.append(LocalPoint(x=x, z=y))
+        headings.append(psi)
+        curvatures.append(kappa)
+    if points and points[0] != points[-1]:
+        points.append(points[0])
+        s_values.append(s_values[-1] + dist(points[-2], points[-1]))
+        headings.append(headings[0])
+        curvatures.append(curvatures[0])
+    return points, s_values, headings, curvatures
+
+
+def geometry_result_from_local_points(
+    title: str,
+    points: list[LocalPoint],
+    source_label: str,
+    source_note: str,
+    source_urls: dict[str, str | None],
+    metadata: dict[str, Any],
+) -> GeometryResult:
+    if not points:
+        raise ValueError("Cannot build geometry from an empty point list.")
+    local_points = list(points)
+    if local_points[0] != local_points[-1]:
+        local_points.append(local_points[0])
+    geographic_points = [
+        LatLonPoint(
+            lat=point.z / 111132.0,
+            lon=point.x / 111320.0,
+        )
+        for point in local_points
+    ]
+    distances_m = cumulative_dist(local_points)
+    return GeometryResult(
+        title=title,
+        source_label=source_label,
+        source_note=source_note,
+        source_urls=source_urls,
+        geographic_points=geographic_points,
+        local_points=local_points,
+        distances_m=distances_m,
+        projection_origin=LatLonPoint(lat=0.0, lon=0.0),
+        total_length_m=distances_m[-1] if distances_m else 0.0,
+        metadata=metadata,
+    )
 
 
 def load_track_configs() -> dict[str, Any]:
@@ -286,9 +393,12 @@ def center_points(points: list[LocalPoint]) -> list[LocalPoint]:
     return [LocalPoint(x=point.x - mean_x, z=point.z - mean_z) for point in points]
 
 
-def best_circular_alignment_shift(reference_points: list[LocalPoint], candidate_points: list[LocalPoint]) -> int:
+def best_circular_alignment_metrics(
+    reference_points: list[LocalPoint],
+    candidate_points: list[LocalPoint],
+) -> tuple[int, float]:
     if not reference_points or not candidate_points or len(reference_points) != len(candidate_points):
-        return 0
+        return 0, float("inf")
 
     ref = center_points(reference_points)
     cand = center_points(candidate_points)
@@ -330,7 +440,14 @@ def best_circular_alignment_shift(reference_points: list[LocalPoint], candidate_
             best_error = error
             best_shift = shift
 
-    return best_shift
+    if best_error == float("inf"):
+        return 0, float("inf")
+    return best_shift, math.sqrt(best_error / n)
+
+
+def best_circular_alignment_shift(reference_points: list[LocalPoint], candidate_points: list[LocalPoint]) -> int:
+    shift, _ = best_circular_alignment_metrics(reference_points, candidate_points)
+    return shift
 
 
 def segment_heading(points: list[LocalPoint], at_start: bool) -> float:
@@ -340,7 +457,46 @@ def segment_heading(points: list[LocalPoint], at_start: bool) -> float:
     return math.degrees(math.atan2(b.x - a.x, b.z - a.z))
 
 
-def build_osm_raceway_loop(segments: list[tuple[int, list[LocalPoint], str, float]]) -> list[LocalPoint]:
+def segment_name_bias(
+    name: str,
+    preferred_terms: list[str] | None = None,
+    avoid_terms: list[str] | None = None,
+) -> float:
+    normalized_name = normalize(name)
+    if not normalized_name:
+        return 0.0
+
+    bias = 0.0
+    preferred_terms = [normalize(term) for term in (preferred_terms or []) if normalize(term)]
+    avoid_terms = [normalize(term) for term in (avoid_terms or []) if normalize(term)]
+
+    if any(term in normalized_name for term in avoid_terms):
+        bias += 500.0
+    if any(term in normalized_name for term in preferred_terms):
+        bias -= 120.0
+    return bias
+
+
+def path_quality(points: list[LocalPoint]) -> tuple[float, float]:
+    if len(points) < 2:
+        return 0.0, 0.0
+
+    working_points = points[:-1] if len(points) > 2 and points[0] == points[-1] else points
+    steps = [dist(a, b) for a, b in zip(working_points, working_points[1:])]
+    if not steps:
+        return 0.0, 0.0
+
+    max_step = max(steps)
+    discontinuity_penalty = sum(max(0.0, step - 90.0) for step in steps)
+    return max_step, discontinuity_penalty
+
+
+def build_osm_raceway_loop(
+    segments: list[tuple[int, list[LocalPoint], str, float]],
+    preferred_terms: list[str] | None = None,
+    avoid_terms: list[str] | None = None,
+    shape_reference: list[LocalPoint] | None = None,
+) -> list[LocalPoint]:
     if not segments:
         return []
 
@@ -348,7 +504,12 @@ def build_osm_raceway_loop(segments: list[tuple[int, list[LocalPoint], str, floa
         return (round(point.x, 6), round(point.z, 6))
 
     def priority(seg: tuple[int, list[LocalPoint], str, float]) -> tuple[int, int, float]:
-        return (1 if seg[2].strip() else 0, len(seg[1]), seg[3])
+        return (
+            1 if seg[2].strip() else 0,
+            int(segment_name_bias(seg[2], preferred_terms, avoid_terms)),
+            len(seg[1]),
+            seg[3],
+        )
 
     by_endpoint: dict[tuple[float, float], list[tuple[int, list[LocalPoint], str, float]]] = {}
     for seg in segments:
@@ -378,9 +539,9 @@ def build_osm_raceway_loop(segments: list[tuple[int, list[LocalPoint], str, floa
                     heading = segment_heading(points, at_start=False)
                     reverse = True
                 diff = abs(((heading - current_heading + 180.0) % 360.0) - 180.0)
-                scored.append((diff, -len(points), seg, reverse))
-            scored.sort(key=lambda item: (item[0], item[1]))
-            _, _, chosen, reverse = scored[0]
+                scored.append((segment_name_bias(seg[2], preferred_terms, avoid_terms), diff, -len(points), seg, reverse))
+            scored.sort(key=lambda item: (item[0], item[1], item[2]))
+            _, _, _, chosen, reverse = scored[0]
             used.add(chosen[0])
             oriented = list(reversed(chosen[1])) if reverse else chosen[1]
             path.extend(oriented[1:])
@@ -395,6 +556,7 @@ def build_osm_raceway_loop(segments: list[tuple[int, list[LocalPoint], str, floa
 
     best_path: list[LocalPoint] = []
     best_length = 0.0
+    best_score = float("-inf")
     for start in sorted(segments, key=priority, reverse=True):
         candidate_path = trace_from_start(start)
         if len(candidate_path) < 4:
@@ -402,7 +564,25 @@ def build_osm_raceway_loop(segments: list[tuple[int, list[LocalPoint], str, floa
         if candidate_path[0] != candidate_path[-1]:
             continue
         candidate_length = sum(dist(a, b) for a, b in zip(candidate_path, candidate_path[1:]))
-        if candidate_length > best_length:
+        max_step, discontinuity_penalty = path_quality(candidate_path)
+        if max_step > 240.0:
+            continue
+        candidate_score = candidate_length - discontinuity_penalty * 6.0 - max(0.0, max_step - 120.0) * 10.0
+        if shape_reference and len(shape_reference) >= 3:
+            candidate_count = len(shape_reference)
+            candidate_distances = cumulative_dist(candidate_path)
+            if candidate_distances[-1] > 0:
+                candidate_x = [point.x for point in candidate_path[:-1]]
+                candidate_z = [point.z for point in candidate_path[:-1]]
+                sampled_x = resample_closed_profile(candidate_distances[:-1], candidate_x, candidate_count)
+                sampled_z = resample_closed_profile(candidate_distances[:-1], candidate_z, candidate_count)
+                if len(sampled_x) == candidate_count and len(sampled_z) == candidate_count:
+                    candidate_reference = [LocalPoint(x=x, z=z) for x, z in zip(sampled_x, sampled_z)]
+                    _, shape_rmse = best_circular_alignment_metrics(shape_reference, candidate_reference)
+                    if math.isfinite(shape_rmse):
+                        candidate_score -= shape_rmse * 25.0
+        if candidate_score > best_score or (candidate_score == best_score and candidate_length > best_length):
+            best_score = candidate_score
             best_length = candidate_length
             best_path = candidate_path
 
@@ -479,6 +659,266 @@ def best_event_match(fastf1, track_query: str, year: int | None) -> tuple[int, A
     return best[1], best[2]
 
 
+def resolve_tumftm_geometry(
+    title: str,
+    event_fields: list[str],
+    track_config: dict[str, Any],
+    event: TrackEvent,
+) -> GeometryResult | None:
+    explicit_centerline = str(track_config.get("centerline_url", "")).strip()
+    explicit_raceline = str(track_config.get("raceline_url", "")).strip()
+    lap_length_m = fastf1_lap_distance_m(event)
+
+    if explicit_centerline or explicit_raceline:
+        source_label = "configured geometry"
+        source_note = "track config override"
+        geometry_source = str(track_config.get("geometry_source", "auto")).lower()
+        if geometry_source == "track_database":
+            source_label = "TUMFTM track centerline"
+            source_note = "track_database config override"
+        elif geometry_source == "f1tenth_racetrack":
+            source_label = "F1TENTH track centerline"
+            source_note = "f1tenth config override"
+
+        if explicit_centerline:
+            points = load_centerline_points(explicit_centerline)
+            if not points:
+                return None
+            raw_length = cumulative_dist([*points, points[0]])[-1] if points[0] != points[-1] else cumulative_dist(points)[-1]
+            scale = lap_length_m / raw_length if lap_length_m and raw_length > 0 else 1.0
+            points = [LocalPoint(x=point.x * scale, z=point.z * scale) for point in points]
+            return geometry_result_from_local_points(
+                title=title,
+                points=points,
+                source_label=source_label,
+                source_note=source_note,
+                source_urls={"centerline": explicit_centerline, "raceline": None},
+                metadata={
+                    "track_query": title,
+                    "config_terms": track_config.get("match_terms", []),
+                    "geometry_source": geometry_source if geometry_source != "auto" else "track_database",
+                    "source_repo": None,
+                },
+            )
+
+        points, _, _, _ = load_raceline_points(explicit_raceline)
+        if not points:
+            return None
+        raw_length = cumulative_dist([*points, points[0]])[-1] if points[0] != points[-1] else cumulative_dist(points)[-1]
+        scale = lap_length_m / raw_length if lap_length_m and raw_length > 0 else 1.0
+        points = [LocalPoint(x=point.x * scale, z=point.z * scale) for point in points]
+        return geometry_result_from_local_points(
+            title=title,
+            points=points,
+            source_label=source_label,
+            source_note=source_note,
+            source_urls={"centerline": None, "raceline": explicit_raceline},
+            metadata={
+                "track_query": title,
+                "config_terms": track_config.get("match_terms", []),
+                "geometry_source": geometry_source if geometry_source != "auto" else "f1tenth_racetrack",
+                "source_repo": None,
+            },
+        )
+
+    candidates = candidate_strings(title, *event_fields)
+    if not candidates:
+        return None
+
+    try:
+        tumftm_tracks = github_contents("TUMFTM/racetrack-database", "tracks")
+    except Exception:
+        tumftm_tracks = []
+
+    tumftm_available = {
+        compact(item.get("name", "")): item.get("download_url", "")
+        for item in tumftm_tracks
+        if item.get("type") == "file" and str(item.get("name", "")).lower().endswith(".csv")
+    }
+    tumftm_url = match_compact_name(candidates, tumftm_available)
+    if tumftm_url:
+        points = load_centerline_points(tumftm_url)
+        if points:
+            raw_length = cumulative_dist([*points, points[0]])[-1] if points[0] != points[-1] else cumulative_dist(points)[-1]
+            scale = lap_length_m / raw_length if lap_length_m and raw_length > 0 else 1.0
+            points = [LocalPoint(x=point.x * scale, z=point.z * scale) for point in points]
+            return geometry_result_from_local_points(
+                title=title,
+                points=points,
+                source_label="TUMFTM track centerline",
+                source_note="TUMFTM centerline database",
+                source_urls={"centerline": tumftm_url, "raceline": None},
+                metadata={
+                    "track_query": title,
+                    "config_terms": track_config.get("match_terms", []),
+                    "geometry_source": "track_database",
+                    "source_repo": "TUMFTM/racetrack-database",
+                },
+            )
+
+    try:
+        f1tenth_roots = github_contents("f1tenth/f1tenth_racetracks")
+    except Exception:
+        f1tenth_roots = []
+
+    directory_map = {
+        compact(item.get("name", "")): item.get("path", item.get("name", ""))
+        for item in f1tenth_roots
+        if item.get("type") == "dir"
+    }
+    match_path = match_compact_name(candidates, directory_map)
+    if match_path:
+        try:
+            directory_items = github_contents("f1tenth/f1tenth_racetracks", match_path)
+        except Exception:
+            directory_items = []
+        centerline_url = None
+        raceline_url = None
+        for item in directory_items:
+            if item.get("type") != "file":
+                continue
+            name = str(item.get("name", ""))
+            if name.endswith("_centerline.csv"):
+                centerline_url = item.get("download_url", centerline_url)
+            elif name.endswith("_raceline.csv"):
+                raceline_url = item.get("download_url", raceline_url)
+        if centerline_url or raceline_url:
+            if centerline_url:
+                points = load_centerline_points(centerline_url)
+                source_label = "F1TENTH track centerline"
+                source_note = "F1TENTH track database"
+                source_urls = {"centerline": centerline_url, "raceline": raceline_url}
+            else:
+                points, _, _, _ = load_raceline_points(raceline_url or "")
+                source_label = "F1TENTH track centerline"
+                source_note = "F1TENTH track database"
+                source_urls = {"centerline": centerline_url, "raceline": raceline_url}
+            if points:
+                raw_length = cumulative_dist([*points, points[0]])[-1] if points[0] != points[-1] else cumulative_dist(points)[-1]
+                scale = lap_length_m / raw_length if lap_length_m and raw_length > 0 else 1.0
+                points = [LocalPoint(x=point.x * scale, z=point.z * scale) for point in points]
+                return geometry_result_from_local_points(
+                    title=title,
+                    points=points,
+                    source_label=source_label,
+                    source_note=source_note,
+                    source_urls=source_urls,
+                    metadata={
+                        "track_query": title,
+                        "config_terms": track_config.get("match_terms", []),
+                        "geometry_source": "f1tenth_racetrack",
+                        "source_repo": "f1tenth/f1tenth_racetracks",
+                    },
+                )
+
+    return None
+
+
+def load_fastf1_shape_hint(event: TrackEvent, sample_count: int = 256) -> list[LocalPoint]:
+    fastf1 = ensure_fastf1()
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    fastf1.Cache.enable_cache(str(CACHE_DIR))
+
+    try:
+        session = fastf1.get_session(event.season_year, str(event.event_name), event.session_type)
+        session.load(weather=False, messages=False)
+    except Exception:
+        return []
+
+    fastest = session.laps.pick_fastest()
+    telemetry = fastest.get_telemetry()
+
+    def find_column(name: str) -> str | None:
+        for column in telemetry.columns:
+            if str(column).lower() == name.lower():
+                return str(column)
+        return None
+
+    distance_col = find_column("Distance")
+    x_col = find_column("X")
+    y_col = find_column("Y")
+    if not distance_col or not x_col or not y_col:
+        return []
+
+    cleaned_xy: list[tuple[float, float, float]] = []
+    for row in telemetry.itertuples(index=False):
+        try:
+            distance = float(getattr(row, distance_col))
+            x_value = float(getattr(row, x_col))
+            y_value = float(getattr(row, y_col))
+        except Exception:
+            continue
+        if math.isnan(distance) or math.isnan(x_value) or math.isnan(y_value):
+            continue
+        cleaned_xy.append((distance, x_value, y_value))
+
+    if len(cleaned_xy) < 3:
+        return []
+
+    cleaned_xy.sort(key=lambda item: item[0])
+    deduped_xy: list[tuple[float, float, float]] = [cleaned_xy[0]]
+    for distance, x_value, y_value in cleaned_xy[1:]:
+        if abs(distance - deduped_xy[-1][0]) < 1e-6:
+            deduped_xy[-1] = (distance, x_value, y_value)
+        else:
+            deduped_xy.append((distance, x_value, y_value))
+
+    start_distance = deduped_xy[0][0]
+    adjusted = [(distance - start_distance, x_value, y_value) for distance, x_value, y_value in deduped_xy]
+    total_distance = adjusted[-1][0]
+    if total_distance <= 0:
+        return []
+
+    distances = [distance for distance, _, _ in adjusted]
+    xs = [x_value for _, x_value, _ in adjusted]
+    ys = [y_value for _, _, y_value in adjusted]
+    xs = smooth_circular(xs, radius=max(2, min(7, len(xs) // 80 or 2)), passes=1)
+    ys = smooth_circular(ys, radius=max(2, min(7, len(ys) // 80 or 2)), passes=1)
+
+    sampled_x = resample_closed_profile(distances, xs, sample_count)
+    sampled_y = resample_closed_profile(distances, ys, sample_count)
+    if len(sampled_x) != sample_count or len(sampled_y) != sample_count:
+        return []
+    return [LocalPoint(x=x_value, z=y_value) for x_value, y_value in zip(sampled_x, sampled_y)]
+
+
+def fastf1_lap_distance_m(event: TrackEvent) -> float | None:
+    fastf1 = ensure_fastf1()
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    fastf1.Cache.enable_cache(str(CACHE_DIR))
+
+    try:
+        session = fastf1.get_session(event.season_year, str(event.event_name), event.session_type)
+        session.load(weather=False, messages=False)
+    except Exception:
+        return None
+
+    fastest = session.laps.pick_fastest()
+    telemetry = fastest.get_telemetry()
+
+    distance_col = None
+    for column in telemetry.columns:
+        if str(column).lower() == "distance":
+            distance_col = str(column)
+            break
+    if not distance_col:
+        return None
+
+    distance_values: list[float] = []
+    for row in telemetry.itertuples(index=False):
+        try:
+            value = float(getattr(row, distance_col))
+        except Exception:
+            continue
+        if math.isnan(value):
+            continue
+        distance_values.append(value)
+
+    if not distance_values:
+        return None
+    return max(distance_values)
+
+
 class OSMGeometryProvider:
     def __init__(self, track_config: dict[str, Any] | None = None):
         self.track_config = track_config or {}
@@ -532,11 +972,37 @@ class OSMGeometryProvider:
             south, north, west, east = map(float, bbox)
             radius = max(1200.0, haversine_m(south, west, north, east) / 2.0 + 250.0)
 
-        overpass_query = f"""[out:json][timeout:25];
-way["highway"="raceway"](around:{int(radius)},{lat0},{lon0});
+        preferred_route_terms = [
+            str(term).strip()
+            for term in self.track_config.get("preferred_route_terms", [])
+            if str(term).strip()
+        ]
+        avoid_route_terms = [
+            str(term).strip()
+            for term in self.track_config.get("avoid_route_terms", [])
+            if str(term).strip()
+        ]
+        shape_reference = load_fastf1_shape_hint(event)
+
+        radius_candidates = [
+            max(900.0, radius * 0.7),
+            max(900.0, radius * 0.8),
+            max(900.0, radius * 0.9),
+            radius,
+        ]
+
+        raw_overpass = None
+        overpass_query = ""
+        radius_used = radius
+        for candidate_radius in radius_candidates:
+            overpass_query = f"""[out:json][timeout:25];
+way["highway"="raceway"](around:{int(candidate_radius)},{lat0},{lon0});
 out tags geom qt;"""
-        raw_overpass = overpass_request(overpass_query)
-        if not raw_overpass:
+            raw_overpass = overpass_request(overpass_query)
+            if raw_overpass and raw_overpass.get("elements"):
+                radius_used = candidate_radius
+                break
+        if not raw_overpass or not raw_overpass.get("elements"):
             raise RuntimeError(
                 f"OpenStreetMap lookup found '{chosen_query}', but no raceway geometry was returned from Overpass."
             )
@@ -558,7 +1024,7 @@ out tags geom qt;"""
             length_m = sum(dist(a, b) for a, b in zip(points, points[1:]))
             segments.append((int(element["id"]), points, name, length_m))
 
-        loop_points = build_osm_raceway_loop(segments)
+        loop_points = build_osm_raceway_loop(segments, preferred_route_terms, avoid_route_terms, shape_reference)
         if not loop_points:
             raise RuntimeError(
                 f"OpenStreetMap geometry search for '{chosen_query}' returned ways, but they could not be ordered into a closed loop."
@@ -600,7 +1066,7 @@ out tags geom qt;"""
                 "nominatim_display_name": str(nominatim_result.get("display_name", "")),
                 "overpass_query": overpass_query,
                 "segment_count": len(segments),
-                "radius_m": radius,
+                "radius_m": radius_used,
             },
         )
 
@@ -1307,13 +1773,27 @@ def load_geometry_from_cache(cache_path: Path) -> GeometryResult | None:
         return None
     try:
         payload = json.loads(cache_path.read_text())
-        return geometry_payload_to_result(payload, default_title=cache_path.stem.split("_osm_", 1)[0])
+        default_title = cache_path.stem
+        for suffix in ("_geometry", "_osm_raceway"):
+            if default_title.endswith(suffix):
+                default_title = default_title[: -len(suffix)]
+                break
+        return geometry_payload_to_result(payload, default_title=default_title)
     except Exception:
         return None
 
 
 def save_geometry_cache(cache_path: Path, geometry: GeometryResult) -> None:
     cache_path.write_text(json.dumps(geometry_result_to_payload(geometry), indent=2))
+
+
+def resolve_geometry(track_query: str, event: TrackEvent, track_config: dict[str, Any]) -> GeometryResult:
+    geometry = resolve_tumftm_geometry(track_query, event.fields, track_config, event)
+    if geometry is not None:
+        return geometry
+
+    geometry_provider = OSMGeometryProvider(track_config)
+    return geometry_provider.resolve(track_query, event)
 
 
 def main() -> None:
@@ -1334,15 +1814,14 @@ def main() -> None:
     output_root = Path(args.output_root).resolve()
     track_root = output_root / sanitize_dirname(title)
     cache_html = track_root / f"{slugify(title)}-3d.html"
-    geometry_cache = track_root / f"{slugify(title)}_osm_raceway.json"
+    geometry_cache = track_root / f"{slugify(title)}_geometry.json"
     track_root.mkdir(parents=True, exist_ok=True)
-    geometry_provider = OSMGeometryProvider(track_config)
     geometry = load_geometry_from_cache(geometry_cache)
     if geometry is not None:
         print(f"Using cached geometry from {geometry_cache}", file=sys.stderr)
     else:
         try:
-            geometry = geometry_provider.resolve(args.track, event)
+            geometry = resolve_geometry(args.track, event, track_config)
         except RuntimeError:
             cached_geometry = load_geometry_from_html(cache_html)
             if cached_geometry is None:

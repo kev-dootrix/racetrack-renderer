@@ -109,16 +109,6 @@ def ensure_fastf1():
     return fastf1
 
 
-def fetch_text(url: str) -> str:
-    req = Request(url, headers={"User-Agent": "TrackMaker/1.0"})
-    with urlopen(req, timeout=30) as response:
-        return response.read().decode("utf-8")
-
-
-def fetch_json(url: str) -> dict[str, Any]:
-    return json.loads(fetch_text(url))
-
-
 def slugify(value: str) -> str:
     value = value.lower().strip()
     value = re.sub(r"[^a-z0-9]+", "-", value)
@@ -200,13 +190,6 @@ def interpolate_float(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
-def interpolate_point(a: LocalPoint, b: LocalPoint, t: float) -> LocalPoint:
-    return LocalPoint(
-        x=interpolate_float(a.x, b.x, t),
-        z=interpolate_float(a.z, b.z, t),
-    )
-
-
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     r = 6371000.0
     phi1 = math.radians(lat1)
@@ -286,6 +269,70 @@ def resample_closed_profile(distances: list[float], values: list[float], sample_
     return smooth_circular(samples, radius=max(3, min(10, sample_count // 28 or 3)), passes=2)
 
 
+def rotate_series(values: list[float], offset: int) -> list[float]:
+    if not values:
+        return []
+    offset %= len(values)
+    if offset == 0:
+        return list(values)
+    return values[offset:] + values[:offset]
+
+
+def center_points(points: list[LocalPoint]) -> list[LocalPoint]:
+    if not points:
+        return []
+    mean_x = sum(point.x for point in points) / len(points)
+    mean_z = sum(point.z for point in points) / len(points)
+    return [LocalPoint(x=point.x - mean_x, z=point.z - mean_z) for point in points]
+
+
+def best_circular_alignment_shift(reference_points: list[LocalPoint], candidate_points: list[LocalPoint]) -> int:
+    if not reference_points or not candidate_points or len(reference_points) != len(candidate_points):
+        return 0
+
+    ref = center_points(reference_points)
+    cand = center_points(candidate_points)
+    n = len(ref)
+    best_shift = 0
+    best_error = float("inf")
+
+    for shift in range(n):
+        shifted = cand[shift:] + cand[:shift]
+
+        sum_a = 0.0
+        sum_b = 0.0
+        sum_c = 0.0
+        for ref_point, cand_point in zip(ref, shifted):
+            sum_a += cand_point.x * ref_point.x + cand_point.z * ref_point.z
+            sum_b += cand_point.x * ref_point.z - cand_point.z * ref_point.x
+            sum_c += cand_point.x * cand_point.x + cand_point.z * cand_point.z
+
+        if sum_c <= 0:
+            continue
+
+        magnitude = math.hypot(sum_a, sum_b)
+        if magnitude <= 0:
+            continue
+
+        scale = magnitude / sum_c
+        cos_theta = sum_a / magnitude
+        sin_theta = sum_b / magnitude
+
+        error = 0.0
+        for ref_point, cand_point in zip(ref, shifted):
+            rotated_x = scale * (cand_point.x * cos_theta - cand_point.z * sin_theta)
+            rotated_z = scale * (cand_point.x * sin_theta + cand_point.z * cos_theta)
+            dx = rotated_x - ref_point.x
+            dz = rotated_z - ref_point.z
+            error += dx * dx + dz * dz
+
+        if error < best_error:
+            best_error = error
+            best_shift = shift
+
+    return best_shift
+
+
 def segment_heading(points: list[LocalPoint], at_start: bool) -> float:
     if len(points) < 2:
         return 0.0
@@ -300,6 +347,9 @@ def build_osm_raceway_loop(segments: list[tuple[int, list[LocalPoint], str, floa
     def key_for(point: LocalPoint) -> tuple[float, float]:
         return (round(point.x, 6), round(point.z, 6))
 
+    def priority(seg: tuple[int, list[LocalPoint], str, float]) -> tuple[int, int, float]:
+        return (1 if seg[2].strip() else 0, len(seg[1]), seg[3])
+
     by_endpoint: dict[tuple[float, float], list[tuple[int, list[LocalPoint], str, float]]] = {}
     for seg in segments:
         start_key = key_for(seg[1][0])
@@ -307,44 +357,62 @@ def build_osm_raceway_loop(segments: list[tuple[int, list[LocalPoint], str, floa
         by_endpoint.setdefault(start_key, []).append(seg)
         by_endpoint.setdefault(end_key, []).append(seg)
 
-    def priority(seg: tuple[int, list[LocalPoint], str, float]) -> tuple[int, int, float]:
-        return (1 if seg[2].strip() else 0, len(seg[1]), seg[3])
+    def trace_from_start(start: tuple[int, list[LocalPoint], str, float]) -> list[LocalPoint]:
+        used = {start[0]}
+        path = list(start[1])
+        current_heading = segment_heading(path, at_start=False)
+        current_key = key_for(path[-1])
+        start_key = key_for(path[0])
 
-    start = max(segments, key=priority)
-    used = {start[0]}
-    path = list(start[1])
-    current_heading = segment_heading(path, at_start=False)
-    current_key = key_for(path[-1])
-    start_key = key_for(path[0])
+        while True:
+            candidates = [seg for seg in by_endpoint.get(current_key, []) if seg[0] not in used]
+            if not candidates:
+                break
+            scored: list[tuple[float, int, tuple[int, list[LocalPoint], str, float], bool]] = []
+            for seg in candidates:
+                points = seg[1]
+                if key_for(points[0]) == current_key:
+                    heading = segment_heading(points, at_start=True)
+                    reverse = False
+                else:
+                    heading = segment_heading(points, at_start=False)
+                    reverse = True
+                diff = abs(((heading - current_heading + 180.0) % 360.0) - 180.0)
+                scored.append((diff, -len(points), seg, reverse))
+            scored.sort(key=lambda item: (item[0], item[1]))
+            _, _, chosen, reverse = scored[0]
+            used.add(chosen[0])
+            oriented = list(reversed(chosen[1])) if reverse else chosen[1]
+            path.extend(oriented[1:])
+            current_heading = segment_heading(oriented, at_start=False)
+            current_key = key_for(oriented[-1])
+            if current_key == start_key:
+                break
 
-    while True:
-        candidates = [seg for seg in by_endpoint.get(current_key, []) if seg[0] not in used]
-        if not candidates:
-            break
-        scored: list[tuple[float, int, tuple[int, list[LocalPoint], str, float], bool]] = []
-        for seg in candidates:
-            points = seg[1]
-            if key_for(points[0]) == current_key:
-                heading = segment_heading(points, at_start=True)
-                reverse = False
-            else:
-                heading = segment_heading(points, at_start=False)
-                reverse = True
-            diff = abs(((heading - current_heading + 180.0) % 360.0) - 180.0)
-            scored.append((diff, -len(points), seg, reverse))
-        scored.sort(key=lambda item: (item[0], item[1]))
-        _, _, chosen, reverse = scored[0]
-        used.add(chosen[0])
-        oriented = list(reversed(chosen[1])) if reverse else chosen[1]
-        path.extend(oriented[1:])
-        current_heading = segment_heading(oriented, at_start=False)
-        current_key = key_for(oriented[-1])
-        if current_key == start_key:
-            break
+        if path and path[0] != path[-1]:
+            path.append(path[0])
+        return path
 
-    if path and path[0] != path[-1]:
-        path.append(path[0])
-    return path
+    best_path: list[LocalPoint] = []
+    best_length = 0.0
+    for start in sorted(segments, key=priority, reverse=True):
+        candidate_path = trace_from_start(start)
+        if len(candidate_path) < 4:
+            continue
+        if candidate_path[0] != candidate_path[-1]:
+            continue
+        candidate_length = sum(dist(a, b) for a, b in zip(candidate_path, candidate_path[1:]))
+        if candidate_length > best_length:
+            best_length = candidate_length
+            best_path = candidate_path
+
+    if best_path:
+        return best_path
+
+    fallback = trace_from_start(max(segments, key=priority))
+    if fallback and fallback[0] != fallback[-1]:
+        fallback.append(fallback[0])
+    return fallback
 
 
 def nominatim_search(query: str) -> dict[str, Any] | None:
@@ -564,6 +632,8 @@ class FastF1ElevationProvider:
             return None
 
         distance_col = find_column("Distance")
+        x_col = find_column("X")
+        y_col = find_column("Y")
         z_col = find_column("Z")
         if not distance_col or not z_col:
             raise RuntimeError(
@@ -571,15 +641,20 @@ class FastF1ElevationProvider:
             )
 
         cleaned: list[tuple[float, float]] = []
+        cleaned_xy: list[tuple[float, float, float]] = []
         for row in telemetry.itertuples(index=False):
             try:
                 distance = float(getattr(row, distance_col))
                 z_value = float(getattr(row, z_col)) / 10.0
+                x_value = float(getattr(row, x_col)) if x_col else 0.0
+                y_value = float(getattr(row, y_col)) if y_col else 0.0
             except Exception:
                 continue
             if math.isnan(distance) or math.isnan(z_value):
                 continue
             cleaned.append((distance, z_value))
+            if x_col and y_col and not (math.isnan(x_value) or math.isnan(y_value)):
+                cleaned_xy.append((distance, x_value, y_value))
 
         if len(cleaned) < 3:
             raise RuntimeError(
@@ -609,9 +684,29 @@ class FastF1ElevationProvider:
         elevations = smooth_circular(elevations, radius=max(2, min(7, len(elevations) // 80 or 2)), passes=1)
 
         sample_count = max(len(geometry.local_points) - 1, 3)
+        alignment_shift = 0
+        if len(cleaned_xy) >= 3:
+            xy_pairs = sorted(cleaned_xy, key=lambda item: item[0])
+            xy_deduped: list[tuple[float, float, float]] = [xy_pairs[0]]
+            for distance, x_value, y_value in xy_pairs[1:]:
+                if abs(distance - xy_deduped[-1][0]) < 1e-6:
+                    xy_deduped[-1] = (distance, x_value, y_value)
+                else:
+                    xy_deduped.append((distance, x_value, y_value))
+            xy_distances = [distance - xy_deduped[0][0] for distance, _, _ in xy_deduped]
+            xy_xs = [x_value for _, x_value, _ in xy_deduped]
+            xy_ys = [y_value for _, _, y_value in xy_deduped]
+            xy_x_profile = resample_closed_profile(xy_distances, xy_xs, sample_count)
+            xy_y_profile = resample_closed_profile(xy_distances, xy_ys, sample_count)
+            if len(xy_x_profile) == sample_count and len(xy_y_profile) == sample_count:
+                candidate_points = [LocalPoint(x=x, z=y) for x, y in zip(xy_x_profile, xy_y_profile)]
+                alignment_shift = best_circular_alignment_shift(geometry.local_points[:-1], candidate_points)
+
         sampled = resample_closed_profile(distances, elevations, sample_count)
         if not sampled:
             raise RuntimeError("FastF1 telemetry could not be resampled into an elevation profile.")
+        if alignment_shift:
+            sampled = rotate_series(sampled, alignment_shift)
 
         min_elevation = min(sampled)
         shifted = [value - min_elevation for value in sampled]
@@ -632,6 +727,7 @@ class FastF1ElevationProvider:
                 "fastest_lap_time": str(fastest["LapTime"]),
                 "raw_sample_count": len(cleaned),
                 "resampled_count": len(shifted),
+                "alignment_shift": alignment_shift,
                 "distance_trace_m": total_distance,
                 "elevation_scale": self.elevation_scale,
             },
@@ -658,9 +754,11 @@ def build_html_document(
     elevation: ElevationResult,
     event: TrackEvent,
     theme: RenderTheme,
+    display_title: str,
 ) -> str:
     data = {
-        "title": geometry.title,
+        "title": display_title,
+        "resolved_title": geometry.title,
         "event": {
             "season_year": event.season_year,
             "event_name": event.event_name,
@@ -717,7 +815,7 @@ def build_html_document(
         },
     }
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
-    title_escaped = html.escape(geometry.title)
+    title_escaped = html.escape(display_title)
     info_line = html.escape(f"{geometry.source_label} • {elevation.source_label}")
     event_line = html.escape(f"{event.location} • {event.session_type} {event.season_year}")
     track_length_km = geometry.total_length_m / 1000.0
@@ -889,14 +987,18 @@ def build_html_document(
     const data = window.__TRACK_DATA__;
     const theme = data.theme;
     const rawPoints = data.geometry.points;
-    const centerline = rawPoints.slice(0, -1).map((point, index) => {{
-      const elevation = data.elevation.values_m[index] ?? 0;
+    function toScenePoint(point, elevation) {{
       return {{
         x: point.x,
         y: elevation * theme.elevationScale,
-        z: point.z,
+        z: -point.z,
         distance: point.distance_m,
       }};
+    }}
+
+    const centerline = rawPoints.slice(0, -1).map((point, index) => {{
+      const elevation = data.elevation.values_m[index] ?? 0;
+      return toScenePoint(point, elevation);
     }});
 
     const canvas = document.getElementById("scene");
@@ -1257,7 +1359,7 @@ def main() -> None:
         track_depth=args.track_depth,
     )
     html_path = track_root / f"{slugify(title)}-3d.html"
-    html_path.write_text(build_html_document(geometry, elevation, event, theme))
+    html_path.write_text(build_html_document(geometry, elevation, event, theme, display_title=title))
     print(str(html_path))
 
 

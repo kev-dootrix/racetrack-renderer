@@ -1,0 +1,14 @@
+{
+  "id": "spa",
+  "title": "Circuit de Spa-Francorchamps",
+  "match_terms": [
+    "spa",
+    "spa francorchamps",
+    "spa-francorchamps",
+    "circuit de spa francorchamps",
+    "circuit de spa-francorchamps",
+    "formula 1 belgian grand prix",
+    "belgian grand prix"
+  ],
+  "geometry_source": "osm_raceway"
+}
